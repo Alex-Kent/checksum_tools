@@ -1,0 +1,164 @@
+.pc
+
+.TH UPDATE_CHECKSUMS 1 "2021-04-27" "1.0.0" "Checksum tools"
+.SH NAME
+update_checksums \- Update file checksums
+
+.SH SYNOPSIS
+
+.B update_checksums
+( 
+.I file
+|
+.I directory
+) [ \&... ] [
+.I options
+]
+
+.SH OVERVIEW
+Updates the file checksums for all specified files and directories.
+
+.SH NOTES
+If a file does not appear to have been modified (same size and last-modified date) then the checksum will not be recomputed.
+To recompute checksums for all files (not just those that appear to have changed) use the \fB\-\-discard\-existing\fR (\fB-d\fR) option.
+
+.SH OPTIONS
+
+.SS "Main options"
+
+.TP
+.B \-d\fR, \fB\-\-discard\-existing
+Discard existing checksums and recompute them
+
+.TP
+.B \-r\fR, \fB\-\-recurse
+Recurse into subdirectories (default)
+
+.TP
+.B \-R\fR, \fB\-\-no\-recurse
+Do not recurse into subdirectories
+
+.TP
+.B \-x\fR, \fB\-\-one\-filesystem
+Don't cross filesystem boundaries while recursing
+
+.SS "Core options"
+The following options can be used with any command in the 
+.B checksum_tools 
+suite:
+
+.TP
+.B \-h\fR, \fB\-\-help
+Show brief usage message
+
+.TP
+.B \-H\fR, \fB\-\-help\-all
+Show detailed usage message
+
+.TP
+.B \-\-help\-core
+Show options supported by all commands
+
+.TP
+.B \-A\fR, \fB\-\-no\-act
+Do not delete or move any files (\f(CW.md5sums\fR and extended attribute metadata may be updated)
+
+.TP
+.B \-b\fR, \fB\-\-built\-in\-copy
+Use a built-in function to copy files (instead of using e.g. \fBcp \-ap\fR); this is also used when copying files or moving files across devices.
+
+(not currently implemented)
+
+.TP
+.B \-c\fR, \fB\-\-compute\-missing
+Compute and store MD5 checksums when not present
+
+(default)
+
+.TP
+.B \-\-no\-compute\-missing
+Don't compute or store missing MD5 checksums
+
+.TP
+.B \-d\fR, \fB\-\-discard\-existing
+Discard existing checksums and recompute them
+
+.TP
+.B \-E\fR, \fB\-\-ignore\-symlinks
+Directories holding only symlinks or subdirectories (no regular files) are considered empty.
+
+.TP
+.B \-n\fR, \fB\-\-same\-name
+For a file to match it must have same filename (case-insensitive) as well as the same fingerprint.
+
+At some point a \f(CW--case-insensitive\fR option may be added; if this is done, the \f(CW--same-name\fR option will be case-sensitive unless case-insensitivity is explicitly requested.
+
+.TP
+.B \-O\fR, \fB\-\-overwrite
+Allow overwriting of existing files
+
+.TP
+.B \-P\fR, \fB\-\-preserve
+Never overwrite existing files
+
+Attempting to overwrite an exising file will display a warning to \f(CWSTDERR\fR then continue.
+
+.TP
+.B \-r\fR, \fB\-\-recurse
+Recurse into subdirectories (default)
+
+.TP
+.B \-R\fR, \fB\-\-no\-recurse
+Do not recurse into subdirectories
+
+.TP
+.B \-x\fR, \fB\-\-one\-filesystem
+Don't cross filesystem boundaries while recursing
+
+.TP
+.B \-\-never\-rewrite\-checksums
+If set then neither extended attributes nor the \f(CW.md5sums\fR files will be written to under any circumstances.
+
+.SH AUTHOR
+
+.B checksums_tools
+is written by Alexander Hajnal.
+
+The latest version can be downloaded from 
+.IP
+https://github.com/Alex-Kent/checksum_tools/
+.PP
+Any problems can be reported to the issue tracker at 
+.IP
+https://github.com/Alex-Kent/checksum_tools/issues
+.PP
+
+.SH "SEE ALSO"
+.BR checksum_tool (1), 
+.BR clear_checksums (1),
+.BR cull_dupes (1),
+.BR find_dupes (1),
+.BR find_orphans (1),
+.BR get_metadata (1),
+.BR link_dupes (1),
+.BR prune_dirs (1),
+.BR restore_to_xa_location (1),
+.BR symlink_dupes (1),
+.BR verify_checksums (1)
+
+Usage examples can be found in 
+.BR checksum_tool (1)
+\.
+
+.BR /usr/local/share/checksum_tools/README.md
+provides a full description of how to use the software.
+
+.SH LICENSE
+
+checksum_tools \(co 2021 Alexander Hajnal
+
+This software is licensed under version 3 of the GNU Affero General Public License.  See the 
+.B LICENSE
+file (included with this software) to view the full text of the license.
+
+

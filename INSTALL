@@ -1,0 +1,46 @@
+Basic installation
+------------------
+
+To install checksum tools run:
+
+sudo make install
+
+This will install the files as follows:
+
+	Programs:             /usr/local/bin/
+	Man pages:            /usr/local/share/man/man1/
+	Other documentation:  /usr/local/share/doc/checksum_tools/
+
+To change the installation location edit the Makefile and change the first 
+line ("prefix = /usr/local") to the desired location.
+
+To remove the software and its documention run:
+
+sudo make uninstall
+
+
+Required Perl modules
+---------------------
+
+The following Perl modules must be installed:
+
+	Cwd
+	Digest::MD5
+	File::Basename
+	File::ExtAttr
+	File::Spec
+
+These modules can be installed by running:
+
+sudo cpan Cwd Digest::MD5 File::Basename File::ExtAttr File::Spec
+
+
+3rd-party extended attribute support
+------------------------------------
+
+Some system software (e.g. KDE3/Trinity) doesn't copy extended attributes when 
+copying files.  Modifiying such software to copy them is quite straightforward.
+A patched version of the KDE3/Trinity libkio library is provided.  This can 
+be used to add extended attribute support to KDE3/Trinity or as a model for 
+added extended attribute support to other programs.  See the "Adding extended 
+user attribute support to older software" section of README.md for details.

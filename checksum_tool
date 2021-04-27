@@ -1,0 +1,5713 @@
+#!/usr/bin/perl
+
+# checksum_tools v1.0.0 © 2021 Alexander Hajnal
+# 
+# This program is licensed under version 3 of the GNU Affero General Public 
+# License.  See the LICENSE file to view the full text of the license.
+#
+# If you encounter any problems please report them to the project's issue 
+# tracker at https://github.com/Alex-Kent/checksum_tools/issues
+
+
+# Best set of options for UTF-8 support:
+binmode STDOUT, ":raw";
+
+use strict;
+
+$| = 1;
+
+my $VERSION_STRING = '1.0.0';
+
+# Files to completely ignore
+my %ignore = map { $_ => 1 } ( '.md5sums', '.no_md5sums', '.img-md5sums', '.atom', '.DS_Store', '.directory', '.folder.png', 'Thumbs.db', 'Desktop.ini', 'BBThumbs.dat', '.DS_Store', 'swapfile' );
+my %ignore_dirs = map { $_ => 1 } ( '.xvpics', '.pics', '.AppleDouble' );
+
+# Current checksum file version number
+my $CURRENT_VERSION = 2;
+
+use File::Basename;            # For basename, dirname, fileparse
+use Digest::MD5;               # For hexdigest
+use File::ExtAttr ':all';      # For getfattr, setfattr
+                               # Up to 68 bytes can be stored within a file's
+                               # inode using a single-character attribute name.
+                               # (Only if file has only that one attribute.)
+use File::Spec;                # For splitpath, catfile
+use Cwd 'abs_path';            # For abs_path
+
+#use Data::Dumper;              # Only used when debugging
+#$Data::Dumper::Deparse = 1;
+#$Data::Dumper::Sortkeys = 1;
+
+# Support for aliases in hashes.
+# These functions are defined later in the script.
+# Currently used in GetAvailableCommands.
+sub ALIAS($$@);
+sub COOK(\%);
+
+# Get running command's name
+my $COMMAND = File::Basename::basename($0);
+
+#print STDERR "Command: $COMMAND\n";
+
+my %OPTIONS = ();
+my @OBJECTS = ();
+
+my %STRINGS = ();
+GetStrings(\%STRINGS);
+
+my %AVAILABLE_COMMANDS = ();
+GetAvailableCommands(\%AVAILABLE_COMMANDS, \%STRINGS);
+
+my %AVAILABLE_OPTIONS = ();
+GetAvailableOptions(\%AVAILABLE_OPTIONS, \%STRINGS);
+
+my $HAVE_ARGV = scalar @ARGV;
+my $ACTUAL_COMMAND = GetOptions($COMMAND, \@ARGV, \%OPTIONS, \@OBJECTS, \%AVAILABLE_COMMANDS, \%AVAILABLE_OPTIONS, \%STRINGS);
+
+
+
+unless (@OBJECTS) {
+	#Usage( $COMMAND, \%OPTIONS, \%AVAILABLE_COMMANDS, \%AVAILABLE_OPTIONS, \%STRINGS );
+	if ($HAVE_ARGV) {
+		print Localize( $STRINGS{'ERROR'} ) . " " . Localize( $STRINGS{'no-objects-specified'} ) . "\n";
+	} else {
+		Usage( $ACTUAL_COMMAND, \%OPTIONS, \%AVAILABLE_COMMANDS, \%AVAILABLE_OPTIONS, \%STRINGS );
+	}
+	exit;
+}
+
+# Variable to hold user-defined datastructure
+# The various commands can use this to store state during scans.
+my %user = ( );
+
+
+# === Call initialize callback ===
+if ( defined $OPTIONS{'_COMMAND'}{'initialize'} ) {
+	#print "$OPTIONS{'_COMMAND'}{'initialize'}\n";
+	&{ $OPTIONS{'_COMMAND'}{'initialize'} }( \%user, \@OBJECTS, \%OPTIONS );
+}
+
+
+#print "Phases: $OPTIONS{'_COMMAND'}{'phases'}\n";
+unless ( ( $OPTIONS{'_COMMAND'}{'phases'} == 1 ) || ( $OPTIONS{'_COMMAND'}{'phases'} == 2 ) ) {
+	print STDERR Localize( $STRINGS{'INTERNAL-ERROR'} ) . " " . Localize( $STRINGS{'phases-not-specified'} ) . "\n";
+	exit;
+}
+
+
+if ( $OPTIONS{'_COMMAND'}{'phases'} == 1 ) {
+	# *** One phase ***
+	
+	# *** Phase 1 (only) ***
+	
+	# === Loop through all objects passed on the commandline ===
+	foreach my $object ( @OBJECTS) {
+		
+		#print "\n\n";
+		
+		# === Call phase 1 per-tree pre-scan callback ===
+		if ( defined $OPTIONS{'_COMMAND'}{'phase-1-per-tree-pre'} ) {
+			#print "$OPTIONS{'_COMMAND'}{'phase-1-per-tree-pre'}\n";
+			&{ $OPTIONS{'_COMMAND'}{'phase-1-per-tree-pre'} }( \%user, $object, \%OPTIONS );
+		}
+		
+		# === Scan the current object ===
+		$OPTIONS{'SCAN_OBJECT'} = $object;
+		my $returned = ProcessDir(1, $object, \%user, \%OPTIONS, \%STRINGS);
+		
+		# === Call phase 1 per-tree post-scan callback ===
+		if ( defined $OPTIONS{'_COMMAND'}{'phase-1-per-tree-post'} ) {
+			#print "$OPTIONS{'_COMMAND'}{'phase-1-per-tree-post'}\n";
+			&{ $OPTIONS{'_COMMAND'}{'phase-1-per-tree-post'} }( \%user, $object, $returned, \%OPTIONS );
+		}
+		
+	}
+	
+} else {
+	# *** Two phase ***
+	
+	my $phase_2_object = pop @OBJECTS;
+	
+	# *** Phase 1 ***
+	
+	# === Loop through all objects passed on the commandline ===
+	foreach my $object ( @OBJECTS) {
+		
+		#print "\n\n";
+		
+		# === Call phase 1 per-tree pre-scan callback ===
+		if ( defined $OPTIONS{'_COMMAND'}{'phase-1-per-tree-pre'} ) {
+			#print "$OPTIONS{'_COMMAND'}{'phase-1-per-tree-pre'}\n";
+			&{ $OPTIONS{'_COMMAND'}{'phase-1-per-tree-pre'} }( \%user, $object, \%OPTIONS );
+		}
+		
+		# === Scan the current object ===
+		$OPTIONS{'SCAN_OBJECT'} = $object;
+		my $returned = ProcessDir(1, $object, \%user, \%OPTIONS, \%STRINGS);
+		
+		# === Call phase 1 per-tree post-scan callback ===
+		if ( defined $OPTIONS{'_COMMAND'}{'phase-1-per-tree-post'} ) {
+			#print "$OPTIONS{'_COMMAND'}{'phase-1-per-tree-post'}\n";
+			&{ $OPTIONS{'_COMMAND'}{'phase-1-per-tree-post'} }( \%user, $object, $returned, \%OPTIONS );
+		}
+		
+	}
+	
+	# *** Phase 2 ***
+	
+	#print "\n\n";
+	
+	if ( defined $OPTIONS{'_COMMAND'}{'phase-2-pre'} ) {
+		#print "$OPTIONS{'_COMMAND'}{'phase-2-pre'}\n";
+		&{ $OPTIONS{'_COMMAND'}{'phase-2-pre'} }( \%user, $phase_2_object, \%OPTIONS );
+	}
+	
+	# === Scan the final object passed on the commandline ===
+	$OPTIONS{'SCAN_OBJECT'} = $phase_2_object;
+	my $returned = ProcessDir(2, $phase_2_object, \%user, \%OPTIONS, \%STRINGS);
+	
+	if ( defined $OPTIONS{'_COMMAND'}{'phase-2-post'} ) {
+		#print "$OPTIONS{'_COMMAND'}{'phase-2-post'}\n";
+		&{ $OPTIONS{'_COMMAND'}{'phase-2-post'} }( \%user, $phase_2_object, $returned, \%OPTIONS );
+	}
+}
+
+
+if ( defined $OPTIONS{'_COMMAND'}{'finalize'} ) {
+	#print "$OPTIONS{'_COMMAND'}{'finalize'}\n";
+	&{ $OPTIONS{'_COMMAND'}{'finalize'} }( \%user, \%OPTIONS );
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# ******************************************************************************
+# ***  Localization                                                          ***
+# ******************************************************************************
+
+
+
+# === All code uses the Localize function to choose a localized string.      ===
+# ===                                                                        ===
+# === Localized strings are defined in GetAvailableCommands(...),            ===
+# === GetAvailableOptions(...), and GetStrings(...), below.                  ===
+# ===                                                                        ===
+# === See Localization.md for more information.                              ===
+
+# Return localized version of a string
+# If no appropriate localization is found then English is returned
+#
+# Note that any single trailing newline character is stripped.  If you want to 
+# have a newline at the end of a returned string you will need to place two 
+# newline characters (e.g. \n\n) at the end of the string.
+sub Localize($) {
+	my ( $_localizations ) = @_;
+	
+	my $locale = ( defined $ENV{'LANG'} ) ? $ENV{'LANG'}
+	           : ( defined $ENV{'LANGUAGE'} ) ? $ENV{'LANGUAGE'}
+	           : ( defined $ENV{'LC_ALL'} ) ? $ENV{'LC_ALL'}
+	           : ( defined $ENV{'KDE_LANG'} ) ? $ENV{'KDE_LANG'}
+	           : 'en';
+	my $localized;
+	
+	if ( defined $$_localizations{$locale} ) {
+		$localized = $$_localizations{$locale};
+		chomp $localized;
+		return $localized;
+	}
+	
+	$locale =~ s/\..*$//; # strip character encoding
+	if ( defined $$_localizations{$locale} ) {
+		$localized = $$_localizations{$locale};
+		chomp $localized;
+		return $localized;
+	}
+	
+	$locale =~ s/_.*$//; # strip locale
+	if ( defined $$_localizations{$locale} ) {
+		$localized = $$_localizations{$locale};
+		chomp $localized;
+		return $localized;
+	}
+	
+	# Nothing appropriate found
+	
+	# Return fixed string if testing localization
+	#
+	# If LANG_FALLBACK_STRING environment variable is set to an obvious string
+	# (e.g. "MISSING" or an empty string "") and the LANG environment variable 
+	# is set to something like "NULL" then any untranslated strings will be 
+	# obvious when the progams are run.
+	if ( defined $ENV{'LANG_FALLBACK_STRING'} ) {
+		return $ENV{'LANG_FALLBACK_STRING'};
+	}
+	
+	# Return English string
+	$localized = $$_localizations{'en'};
+	chomp $localized;
+	return $localized;
+}
+
+
+
+
+
+# ==============================================================================
+# ===  Miscellaneous localizable strings                                    ====
+# ==============================================================================
+
+sub GetStrings($) {
+	my ($_STRINGS) = @_;
+	
+	# All strings here are passed through Localize(...) before being displayed.
+	
+	%$_STRINGS = 	(
+		'INTERNAL-ERROR' => { 'en' => "INTERNAL-ERROR:" },
+		
+		'ERROR' => { 'en' => "ERROR:" },
+		
+		'WARNING' => { 'en' => "WARNING:" },
+		
+		'NOTE' => { 'en' => "NOTE:" },
+		
+		'DUPE' => { 'en' => "DUPE" },
+		
+		'keep' => { 'en' => "keep" },
+		
+		'UNLINK' => { 'en' => "UNLINK" },
+		
+		'MOVE' => { 'en' => "MOVE" },
+		
+		'COPY' => { 'en' => "COPY" },
+		
+		'RENAME' => { 'en' => "RENAME" },
+		
+		'SYMLINK' => { 'en' => "SYMLINK" },
+		
+		'LINK' => { 'en' => "LINK" },
+		
+		'MKDIR' => { 'en' => "MKDIR" },
+		
+		'no-native-cp' => { 'en' => "No native copy command defined.  Cross-device moves will not work." },
+		
+		'no-native-cp-called' => { 'en' => "Can't perform copy (no native copy command defined)." },
+		
+		'overwriting-file' => { 'en' => "Overwriting" },
+		
+		'not-deleting-file' => { 'en' => "Not deleting existing file" },
+		
+		'path-exists-but-not-a-directory' => { 'en' => "Path exists but is not a directory:" },
+		
+		'no-act-active' => { 'en' => "no-act mode active; no files will actually be deleted." },
+		
+		'phases-not-specified' => { 'en' => "The current command did not specify the number of phases to use." },
+		
+		'unsupported-option' => { 'en' => "Unsupported option" },
+		
+		'undefined-option' => { 'en' => "Option listed in supported-options but not defined: " },
+		
+		'options' => { 'en' => "Options:" },
+		
+		'standard-footer' => { 'en' => <<EOF
+
+--------------------------------------------------------------------------------
+
+For more information see the README.md file included with this software.
+
+If you encounter any problems you can report them on the project's issue tracker
+at https://github.com/Alex-Kent/checksum_tools/issues
+
+checksum_tools © 2021 Alexander Hajnal
+Version $VERSION_STRING
+Licensed using version 3 of the GNU Affero General Public License.
+See LICENSE file for details.
+EOF
+		},
+		
+		'supported-options' => { 'en' => "Supported options:" }, 
+		
+		'core-options' => { 'en' => "Core options:" }, 
+		
+		'core-options-only-message' => { 'en' => <<EOF
+Any of the core options can be used.  To see a list of these options run 
+$0 --help-core
+
+EOF
+		}, 
+		
+		'core-options-message' => { 'en' => <<EOF
+In addition any of the core options can be used.  To see a list of these options
+run $0 --help-core
+
+EOF
+		}, 
+		
+		'core-options-header' => { 'en' => "The following options can be used with any command:" },
+		
+		'run-help-to-see-options' => { 'en' => "Run $0 --help to see a list of supported options." },
+		
+		'no-command-specified' => { 'en' => "No command specified." },
+		
+		'multiple-commands-given' => { 'en' => "Only one command can be specified." },
+		
+		'no-objects-specified' => { 'en' => "No objects (files or directories) specified." },
+		
+		'has-no-md5sums' => { 'en' => "Not processing directory (has .no_md5sums file)" },
+		
+		'invalid-escape-encoding' => { 'en' => "Unknown format for EscapeString:" },
+		
+		'is-a-mount-point' => { 'en' => "Not entering filesystem mounted at " },
+		
+		'invalid-call-path' => { 'en' => "Not a valid command function: " },
+	);
+}
+
+
+
+
+
+# ==============================================================================
+# ===  Help messages                                                        ====
+# ==============================================================================
+
+
+# === Show compact summary of available command options ===
+#
+# $mode                -> Name of command to display options for
+# $_AVAILABLE_COMMANDS -> Hash describing the available command modes        (includes localized strings)
+# $_AVAILABLE_OPTIONS  -> Hash describing the available commandline options  (includes localized strings)
+# $_STRINGS            -> Hash miscellaneous character stings                (includes localized strings)
+sub ShowSupportedOptions($$$$) {
+	my ($mode, $_AVAILABLE_COMMANDS, $_AVAILABLE_OPTIONS, $_STRINGS) = @_;
+	
+	my %always_supported = ();
+	foreach my $option ( sort keys %$_AVAILABLE_OPTIONS ) {
+		if ( $$_AVAILABLE_OPTIONS{$option}{'core-option'} ) {
+			$always_supported{$option} = 1;
+		}
+	}
+	
+	unless ( scalar @{$$_AVAILABLE_COMMANDS{$mode}{'supported-options'}} ) {
+		print Localize( $$_STRINGS{'core-options-only-message'} );
+		return;
+	}
+	
+	print Localize($$_STRINGS{'supported-options'}) . "\n";
+	my @options = ();
+	foreach my $option ( #sort { $$_AVAILABLE_OPTIONS{$a}{'long'} cmp $$_AVAILABLE_OPTIONS{$b}{'long'}  } 
+	                     @{$$_AVAILABLE_COMMANDS{$mode}{'supported-options'}} ) {
+		next if ( $always_supported{$option} );
+		
+		if ( $$_AVAILABLE_OPTIONS{$option}{'short'} ) {
+			if ( $$_AVAILABLE_OPTIONS{$option}{'long'} ) {
+				push @options, ( 
+				                 $$_AVAILABLE_OPTIONS{$option}{'long'} . 
+				                 ' (' . $$_AVAILABLE_OPTIONS{$option}{'short'} . ')'
+				               );
+			} else {
+				push @options, $$_AVAILABLE_OPTIONS{$option}{'short'};
+			}
+		} else {
+			push @options, $$_AVAILABLE_OPTIONS{$option}{'long'};
+		}
+	}
+	
+	my $combined_string = join(', ', @options) . "\n";
+	while ( $combined_string ) {
+		if ( length $combined_string < 80 ) {
+			print "$combined_string\n";
+			last;
+		}
+		my $comma_pos = rindex $combined_string, ',', 80;
+		print substr( $combined_string, 0, $comma_pos + 1 ) . "\n";
+		$combined_string = substr( $combined_string, $comma_pos + 2 );
+	}
+	
+	print Localize( $$_STRINGS{'core-options-message'} );
+}
+
+
+# === Show compact summary of available core command options ===
+#
+# $_AVAILABLE_OPTIONS  -> Hash describing the available commandline options  (includes localized strings)
+# $_STRINGS            -> Hash miscellaneous character stings                (includes localized strings)
+sub ShowCoreOptions($$$) {
+	my ($_AVAILABLE_COMMANDS, $_AVAILABLE_OPTIONS, $_STRINGS) = @_;
+	
+	print Localize($$_STRINGS{'core-options-header'}) . "\n";
+	
+	my %always_supported = ();
+	foreach my $option ( sort keys %$_AVAILABLE_OPTIONS ) {
+		if ( $$_AVAILABLE_OPTIONS{$option}{'core-option'} ) {
+			$always_supported{$option} = 1;
+		}
+	}
+	
+	my @options = ();
+	foreach my $option ( sort {
+	                         lc $$_AVAILABLE_OPTIONS{$a}{'short'} cmp lc $$_AVAILABLE_OPTIONS{$b}{'short'}
+	                         ||
+	                         $$_AVAILABLE_OPTIONS{$b}{'short'} cmp $$_AVAILABLE_OPTIONS{$a}{'short'}
+	                       } keys %$_AVAILABLE_OPTIONS ) {
+		next unless ( $always_supported{$option} );
+		
+		if ( $$_AVAILABLE_OPTIONS{$option}{'short'} ) {
+			if ( $$_AVAILABLE_OPTIONS{$option}{'long'} ) {
+				push @options, ( 
+				                 $$_AVAILABLE_OPTIONS{$option}{'long'} . 
+				                 ' (' . $$_AVAILABLE_OPTIONS{$option}{'short'} . ')'
+				               );
+			} else {
+				push @options, $$_AVAILABLE_OPTIONS{$option}{'short'};
+			}
+		} else {
+			push @options, $$_AVAILABLE_OPTIONS{$option}{'long'};
+		}
+	}
+	
+	my $combined_string = join(', ', @options) . "\n";
+	while ( $combined_string ) {
+		if ( length $combined_string < 80 ) {
+			print "$combined_string\n";
+			last;
+		}
+		my $comma_pos = rindex $combined_string, ',', 80;
+		print substr( $combined_string, 0, $comma_pos + 1 ) . "\n";
+		$combined_string = substr( $combined_string, $comma_pos + 2 );
+	}
+	
+}
+
+
+
+# === Show compact summary of available core command options ===
+#
+# $_AVAILABLE_OPTIONS  -> Hash describing the available commandline options  (includes localized strings)
+# $_STRINGS            -> Hash miscellaneous character stings                (includes localized strings)
+sub ShowCoreOptionsLong($$$) {
+	my ($_AVAILABLE_COMMANDS, $_AVAILABLE_OPTIONS, $_STRINGS) = @_;
+	
+	print Localize($$_STRINGS{'core-options-header'}) . "\n";
+	
+	print Localize($$_AVAILABLE_COMMANDS{'help'}{'usage'}) ."\n";
+	print Localize($$_AVAILABLE_COMMANDS{'help-all'}{'usage'}) ."\n";
+	print Localize($$_AVAILABLE_COMMANDS{'help-core'}{'usage'}) ."\n";
+	
+	my %always_supported = ();
+	foreach my $option ( sort keys %$_AVAILABLE_OPTIONS ) {
+		if ( $$_AVAILABLE_OPTIONS{$option}{'core-option'} ) {
+			$always_supported{$option} = 1;
+		}
+	}
+	
+	foreach my $key ( sort {
+	                         lc $$_AVAILABLE_OPTIONS{$a}{'short'} cmp lc $$_AVAILABLE_OPTIONS{$b}{'short'}
+	                         ||
+	                         $$_AVAILABLE_OPTIONS{$b}{'short'} cmp $$_AVAILABLE_OPTIONS{$a}{'short'}
+	                       } keys %$_AVAILABLE_OPTIONS ) {
+		next unless ( $always_supported{$key} );
+		if ( $$_AVAILABLE_OPTIONS{$key}{'short'} ) { # A short option is avaliable
+			print Localize($$_AVAILABLE_OPTIONS{$key}{'usage'}) ."\n";
+		}
+	}
+	
+	# Show options that only have long forms available
+	# (normal alphabetic sort used)
+	foreach my $key ( sort {
+	                         $$_AVAILABLE_OPTIONS{$a}{'long'} cmp $$_AVAILABLE_OPTIONS{$b}{'long'}
+	                       } keys %$_AVAILABLE_OPTIONS ) {
+		next unless ( $always_supported{$key} );
+		unless ( $$_AVAILABLE_OPTIONS{$key}{'short'} ) { # No short option is avaliable
+			if ( $$_AVAILABLE_OPTIONS{$key}{'long'} ) {
+				print Localize($$_AVAILABLE_OPTIONS{$key}{'usage'}) ."\n";
+			}
+		}
+	}
+}
+
+
+
+# === Show list of available command options with brief descriptions of each ===
+#
+# $mode                -> Name of command to display options for
+# $_AVAILABLE_COMMANDS -> Hash describing the available command modes        (includes localized strings)
+# $_AVAILABLE_OPTIONS  -> Hash describing the available commandline options  (includes localized strings)
+# $_STRINGS            -> Hash miscellaneous character stings                (includes localized strings)
+sub ShowSupportedOptionsLong($$$$) {
+	my ($mode, $_AVAILABLE_COMMANDS, $_AVAILABLE_OPTIONS, $_STRINGS) = @_;
+	
+	return unless ( exists   $$_AVAILABLE_COMMANDS{$mode}{'supported-options'} &&
+	                defined  $$_AVAILABLE_COMMANDS{$mode}{'supported-options'} &&
+	                scalar @{$$_AVAILABLE_COMMANDS{$mode}{'supported-options'}} );
+	
+	my %option_available = ();
+	foreach my $option ( @{$$_AVAILABLE_COMMANDS{$mode}{'supported-options'}} ) {
+		$option_available{$option} = 1;
+	}
+	
+	print Localize($$_STRINGS{'options'}) . "\n";
+	print "--------------------------------------------------------------------------------\n";
+	
+	foreach my $key ( sort {
+	                         lc $$_AVAILABLE_OPTIONS{$a}{'short'} cmp lc $$_AVAILABLE_OPTIONS{$b}{'short'}
+	                         ||
+	                         $$_AVAILABLE_OPTIONS{$b}{'short'} cmp $$_AVAILABLE_OPTIONS{$a}{'short'}
+	                       } keys %$_AVAILABLE_OPTIONS ) {
+		next unless ( $option_available{$key} );
+		if ( $$_AVAILABLE_OPTIONS{$key}{'short'} ) { # A short option is avaliable
+			print Localize($$_AVAILABLE_OPTIONS{$key}{'usage'}) ."\n";
+		}
+	}
+	
+	# Show options that only have long forms available
+	# (normal alphabetic sort used)
+	foreach my $key ( sort {
+	                         $$_AVAILABLE_OPTIONS{$a}{'long'} cmp $$_AVAILABLE_OPTIONS{$b}{'long'}
+	                       } keys %$_AVAILABLE_OPTIONS ) {
+		next unless ( $option_available{$key} );
+		unless ( $$_AVAILABLE_OPTIONS{$key}{'short'} ) { # No short option is avaliable
+			if ( $$_AVAILABLE_OPTIONS{$key}{'long'} ) {
+				print Localize($$_AVAILABLE_OPTIONS{$key}{'usage'}) ."\n";
+			}
+		}
+	}
+}
+
+
+
+# === Show help text for current command ===
+#
+# $COMMAND             -> Name of the running command
+# $_OPTIONS            -> Hash of current commandline options (plus others set by the program itself)
+# $_AVAILABLE_COMMANDS -> Hash describing the available command modes        (includes localized strings)
+# $_AVAILABLE_OPTIONS  -> Hash describing the available commandline options  (includes localized strings)
+# $_STRINGS            -> Hash miscellaneous character stings                (includes localized strings)
+sub Usage($$$$$) {
+	my ( $COMMAND, $_OPTIONS, $_AVAILABLE_COMMANDS, $_AVAILABLE_OPTIONS, $_STRINGS ) = @_;
+	
+	if ( $$_OPTIONS{'help-core'} ) {
+		ShowCoreOptionsLong($_AVAILABLE_COMMANDS, $_AVAILABLE_OPTIONS, $_STRINGS);
+		
+	} elsif ($COMMAND ne 'checksum_tool') {
+		# *** Individual command (symlinked to checksum_tool) ***
+		
+		# === Show command names and commandline syntax ===
+		foreach my $form ( @{$$_AVAILABLE_COMMANDS{$COMMAND}{'syntax'}} ) {
+			my $localized_form = Localize($form);
+			print $$_AVAILABLE_COMMANDS{$COMMAND}{'alias'} . ' ' . $localized_form . "\n";
+		}
+		
+		print "\n";
+		
+		# === Show available options ===
+		ShowSupportedOptionsLong($COMMAND, $_AVAILABLE_COMMANDS, $_AVAILABLE_OPTIONS, $_STRINGS);
+		
+		print "\n";
+		
+		print Localize( $$_STRINGS{'core-options-message'} );
+		
+		print "\n";
+		
+		# === Show help text ===
+		print Localize($$_AVAILABLE_COMMANDS{$COMMAND}{'usage_long'}) . "\n";
+		
+		
+	} elsif ( $COMMAND eq 'checksum_tool' ) {
+		# *** Consolidated command (checksum_tool) ***
+		
+		# === Show header ===
+		print Localize( { 'en' => <<EOF
+Checksum tools is a collection of programs that can be used to:
+
+ • Verify the integrity of files.
+ • Find and/or remove duplicate files.
+ • Find files that differ between two directories (or that only exist in one).
+ • Move files across devices while ensuring their integrity.
+
+Mode options
+--------------------------------------------------------------------------------
+
+EOF
+		} ); # END localize
+		
+		# === Show available commands ===
+		
+		print Localize( $$_AVAILABLE_COMMANDS{'help'}{'usage'} ) . "\n";
+		print Localize( $$_AVAILABLE_COMMANDS{'help-all'}{'usage'} ) . "\n";
+		
+		# Show available commands
+		# (sort is by short option, first case insensitive then lowercase first)
+		foreach my $key ( sort {
+		                         lc $$_AVAILABLE_COMMANDS{$a}{'short'} cmp lc $$_AVAILABLE_COMMANDS{$b}{'short'}
+		                         ||
+		                         $$_AVAILABLE_COMMANDS{$b}{'short'} cmp $$_AVAILABLE_COMMANDS{$a}{'short'}
+		                       } keys %$_AVAILABLE_COMMANDS ) {
+			next if ( $key =~ /^checksum_tool|help|help-all$/ );
+			print Localize( $$_AVAILABLE_COMMANDS{$key}{'usage'} ) ."\n";
+		}
+		
+		print Localize( { 'en' => <<EOF
+
+Calling this command with a different name changes its behavior:
+
+    Command name            Equivalent command
+    ----------------------  ------------------
+    clear_checksums         checksum_tool -X
+    cull_dupes              checksum_tool -C
+    find_dupes              checksum_tool -f
+    find_orphans            checksum_tool -F
+    get_metadata            checksum_tool -g
+    link_dupes              checksum_tool -S
+    prune_dirs              checksum_tool -p
+    restore_to_xa_location  checksum_tool -U
+    symlink_dupes           checksum_tool -s
+    update_checksums        checksum_tool -u
+    verify_checksums        checksum_tool -V
+
+Other options
+--------------------------------------------------------------------------------
+
+EOF
+		} ); # END localize
+		
+		# === Show available options ===
+		
+		# Show options that have short forms available
+		# (sort is case insensitive then lowercase first)
+		foreach my $key ( sort {
+		                         lc $$_AVAILABLE_OPTIONS{$a}{'short'} cmp lc $$_AVAILABLE_OPTIONS{$b}{'short'}
+		                         ||
+		                         $$_AVAILABLE_OPTIONS{$b}{'short'} cmp $$_AVAILABLE_OPTIONS{$a}{'short'}
+		                       } keys %$_AVAILABLE_OPTIONS ) {
+			if ( $$_AVAILABLE_OPTIONS{$key}{'short'} ) { # A short option is avaliable
+				print Localize($$_AVAILABLE_OPTIONS{$key}{'usage'}) ."\n";
+			}
+		}
+		
+		# Show options that only have long forms available
+		# (normal alphabetic sort used)
+		foreach my $key ( sort {
+		                         $$_AVAILABLE_OPTIONS{$a}{'long'} cmp $$_AVAILABLE_OPTIONS{$b}{'long'}
+		                       } keys %$_AVAILABLE_OPTIONS ) {
+			next if ( $key =~ /^help|help-all|commands$/ );
+			unless ( $$_AVAILABLE_OPTIONS{$key}{'short'} ) { # No short option is avaliable
+				if ( $$_AVAILABLE_OPTIONS{$key}{'long'} ) {
+					print Localize($$_AVAILABLE_OPTIONS{$key}{'usage'}) ."\n";
+				}
+			}
+		}
+		
+		if ( $$_OPTIONS{'help-all'} ) {
+			# +++ FIXME - Update this is if code is modified to escape displayed filenames. +++
+#String values (filenames, etc.) are byte-wise encoded as follows:
+#
+#    • ASCII values from 32 to 91 and 93 to 126 are shown verbatim.
+#    • ASCII values from 0 to 31, 92, and 127 to 255 are hex encoded \\xDD where 
+#      DD is the value encoded as hexadecimal.
+
+			# +++ FIXME - Update this if --built-in-copy command is added. +++
+#Copying files is normally done by calling "cp -ap"; to have the program do the 
+#copy itself, set the environment variable CHECKSUM_TOOLS_COPY=built-in before 
+#running the program or use the --built-in-copy option.
+
+			print Localize( { 'en' => <<EOF
+Moving files across devices is done by copying the source to destination using 
+the OS' commandline copy command ("cp -ap" on Linux and Mac OS X) followed by a 
+deletion of the source.  As mentioned above, only Linux and Mac OS X are 
+currently supported.  To add support for another OS add its copy command to the 
+'CP' handler in GetOptions().
+
+In all cases, special files (not files, directories, or symlinks) will be 
+ignored.
+EOF
+			} ); # END localize
+			
+			
+			
+			# *** Find duplicates mode (when run from checksum_tool) ***
+			
+			print Localize( { 'en' => <<EOF
+
+
+Find duplicates mode
+--------------------------------------------------------------------------------
+
+EOF
+			} ); # END localize
+			
+			# === Show command names and commandline syntax ===
+			foreach my $form ( @{$$_AVAILABLE_COMMANDS{'find_dupes'}{'syntax'}} ) {
+				my $localized_form = Localize($form);
+				my $pattern = "%s %-" . length($$_AVAILABLE_COMMANDS{'find_dupes'}{'long'}) ."s %s\n";
+				printf( $pattern, $COMMAND, $$_AVAILABLE_COMMANDS{'find_dupes'}{'long'}, $localized_form );
+				printf( $pattern, $COMMAND, $$_AVAILABLE_COMMANDS{'find_dupes'}{'short'}, $localized_form );
+				$pattern = "%-" . ( length($COMMAND) + length($$_AVAILABLE_COMMANDS{'find_dupes'}{'long'}) ) . "s  %s\n";
+				printf( $pattern, 'find_dupes', $localized_form );
+			}
+			
+			print "\n";
+			
+			# === Show available options ===
+			ShowSupportedOptions('find_dupes', $_AVAILABLE_COMMANDS, $_AVAILABLE_OPTIONS, $_STRINGS);
+			
+			# === Show command usage ===
+			print Localize($$_AVAILABLE_COMMANDS{'find_dupes'}{'usage_long'}) . "\n";
+			
+			
+			
+			# *** Find orphans mode (when run from checksum_tool) ***
+			
+			print Localize( { 'en' => <<EOF
+
+
+Find orphans mode
+--------------------------------------------------------------------------------
+
+EOF
+			} ); # END localize
+			
+			# === Show command names and commandline syntax ===
+			foreach my $form ( @{$$_AVAILABLE_COMMANDS{'find_orphans'}{'syntax'}} ) {
+				my $localized_form = Localize($form);
+				my $pattern = "%s %-" . length($$_AVAILABLE_COMMANDS{'find_orphans'}{'long'}) ."s %s\n";
+				printf( $pattern, $COMMAND, $$_AVAILABLE_COMMANDS{'find_orphans'}{'long'}, $localized_form );
+				printf( $pattern, $COMMAND, $$_AVAILABLE_COMMANDS{'find_orphans'}{'short'}, $localized_form );
+				$pattern = "%-" . ( length($COMMAND) + length($$_AVAILABLE_COMMANDS{'find_orphans'}{'long'}) ) . "s  %s\n";
+				printf( $pattern, 'find_orphans', $localized_form );
+			}
+			
+			print "\n";
+			
+			# === Show available options ===
+			ShowSupportedOptions('find_orphans', $_AVAILABLE_COMMANDS, $_AVAILABLE_OPTIONS, $_STRINGS);
+			
+			# === Show command usage ===
+			print Localize($$_AVAILABLE_COMMANDS{'find_orphans'}{'usage_long'}) . "\n";
+			
+			
+			
+			# *** Find duplicates mode (when run from checksum_tool) ***
+			print Localize( { 'en' => <<EOF
+
+
+Cull duplcates mode
+--------------------------------------------------------------------------------
+
+EOF
+			} ); # END localize
+			
+			# === Show command names and commandline syntax ===
+			foreach my $form ( @{$$_AVAILABLE_COMMANDS{'cull_dupes'}{'syntax'}} ) {
+				my $localized_form = Localize($form);
+				my $pattern = "%s %-" . length($$_AVAILABLE_COMMANDS{'cull_dupes'}{'long'}) ."s %s\n";
+				printf( $pattern, $COMMAND, $$_AVAILABLE_COMMANDS{'cull_dupes'}{'long'}, $localized_form );
+				printf( $pattern, $COMMAND, $$_AVAILABLE_COMMANDS{'cull_dupes'}{'short'}, $localized_form );
+				$pattern = "%-" . ( length($COMMAND) + length($$_AVAILABLE_COMMANDS{'cull_dupes'}{'long'}) ) . "s  %s\n";
+				printf( $pattern, 'cull_dupes', $localized_form );
+			}
+			
+			print "\n";
+			
+			# === Show available options ===
+			ShowSupportedOptions('cull_dupes', $_AVAILABLE_COMMANDS, $_AVAILABLE_OPTIONS, $_STRINGS);
+			
+			# === Show command usage ===
+			print Localize($$_AVAILABLE_COMMANDS{'cull_dupes'}{'usage_long'}) . "\n";
+			
+			
+			
+			# *** Link or symlink duplicates mode (when run from checksum_tool) ***
+			
+			print Localize( { 'en' => <<EOF
+
+
+Link duplicates mode
+--------------------------------------------------------------------------------
+
+EOF
+			} ); # END localize
+			
+			# === Show command names and commandline syntax ===
+			print <<EOF;
+checksum_tool --symlink-dupes @{[ Localize( $$_AVAILABLE_COMMANDS{'symlink_dupes'}{'syntax'}[0] ) ]}
+checksum_tool -s              @{[ Localize( $$_AVAILABLE_COMMANDS{'symlink_dupes'}{'syntax'}[0] ) ]}
+symlink-dupes                 @{[ Localize( $$_AVAILABLE_COMMANDS{'symlink_dupes'}{'syntax'}[0] ) ]}
+checksum_tool --link-dupes    @{[ Localize( $$_AVAILABLE_COMMANDS{'link_dupes'}{'syntax'}[0] ) ]}
+checksum_tool -S              @{[ Localize( $$_AVAILABLE_COMMANDS{'link_dupes'}{'syntax'}[0] ) ]}
+link-dupes                    @{[ Localize( $$_AVAILABLE_COMMANDS{'link_dupes'}{'syntax'}[0] ) ]}
+checksum_tool --symlink-dupes @{[ Localize( $$_AVAILABLE_COMMANDS{'symlink_dupes'}{'syntax'}[1] ) ]}
+checksum_tool -s              @{[ Localize( $$_AVAILABLE_COMMANDS{'symlink_dupes'}{'syntax'}[1] ) ]}
+symlink-dupes                 @{[ Localize( $$_AVAILABLE_COMMANDS{'symlink_dupes'}{'syntax'}[1] ) ]}
+checksum_tool --link-dupes    @{[ Localize( $$_AVAILABLE_COMMANDS{'link_dupes'}{'syntax'}[1] ) ]}
+checksum_tool -S              @{[ Localize( $$_AVAILABLE_COMMANDS{'link_dupes'}{'syntax'}[1] ) ]}
+link-dupes                    @{[ Localize( $$_AVAILABLE_COMMANDS{'link_dupes'}{'syntax'}[1] ) ]}
+
+EOF
+			
+			# === Show available options ===
+			ShowSupportedOptions('link_dupes', $_AVAILABLE_COMMANDS, $_AVAILABLE_OPTIONS, $_STRINGS);
+			
+			# === Show command usage ===
+			print Localize( { 'en' => <<EOF
+OBJECTS := ( FILE | DIRECTORY ) [ ... ]
+
+Replace any files in OBJECTS that exist in REFERENCE_DIRECTORY with links to 
+the latter.  When called with a single directory then any duplicate files in 
+the directory are linked to one of the copies.
+
+If --link-dupes is given then hard links will be used whenever possible; if this
+cannot be done (e.g. cross-device links) then symbolic links will be used.  If 
+--symlink-dupes is given then symbolic links are always used.  Normally relative
+links are used if the file being pointed by the link to has a relative path and 
+absolute links are used if the file being pointed to has an absolute path.
+EOF
+			} ); # END localize
+			
+			
+			
+			# *** Move duplicates option (when run from checksum_tool) ***
+			
+			print Localize( { 'en' => <<EOF
+
+
+Move duplicates option
+--------------------------------------------------------------------------------
+
+COMMAND OPTIONS --move-to MOVE_TO_DIRECTORY
+COMMAND OPTIONS -m        MOVE_TO_DIRECTORY
+
+This option can only be used in conjection with cull, link, or symlink modes.  
+Any files that would otherwise be deleted are moved into MOVE_TO_DIRECTORY.  The
+files are placed into subdirectories reflecting their original locations.  For 
+example, both "directory/filename" and "/directory/filename" would be moved to 
+"MOVE_TO_DIRECTORY/directory/filename".
+
+Note that in pathalogical cases multiple duplicate files with the same name that
+are in similarly-named directories may be overwritten in the MOVE_TO_DIRECTORY.
+For example, "checksum_tool -c -m backup_directory home /home keep_directory" 
+may result in duplicates found in "/home" overwriting (in "backup_directory") 
+those with the same name found in "home".
+
+If files are moved to a filesystem that has support for user-defined extended 
+attributes then they can later be restored to their original locations using the
+"restore_to_xa_location" or "checksum_tool --restore" commands (the files' 
+original locations are stored in the user.meta.original_path attributes).
+
+One must be careful when using this option.  If MOVE_TO_DIRECTORY is the same 
+directory as any of the other directories on the commandline (or subdirectories 
+thereof) unexpected and undesirable results may occur.
+
+
+Display metadata mode
+--------------------------------------------------------------------------------
+
+EOF
+			} ); # END localize
+			
+			foreach my $form ( @{$$_AVAILABLE_COMMANDS{'get_metadata'}{'syntax'}} ) {
+				my $localized_form = Localize($form);
+				my $pattern = "%s %-" . length($$_AVAILABLE_COMMANDS{'get_metadata'}{'long'}) ."s %s\n";
+				printf( $pattern, $COMMAND, $$_AVAILABLE_COMMANDS{'get_metadata'}{'long'}, $localized_form );
+				printf( $pattern, $COMMAND, $$_AVAILABLE_COMMANDS{'get_metadata'}{'short'}, $localized_form );
+				$pattern = "%-" . ( length($COMMAND) + length($$_AVAILABLE_COMMANDS{'get_metadata'}{'long'}) ) . "s  %s\n";
+				printf( $pattern, 'get_metadata', $localized_form );
+			}
+			
+			print "\n";
+			
+			ShowSupportedOptions('get_metadata', $_AVAILABLE_COMMANDS, $_AVAILABLE_OPTIONS, $_STRINGS);
+			
+			print Localize($$_AVAILABLE_COMMANDS{'get_metadata'}{'usage_long'}) . "\n";
+			
+			
+			
+			# *** Clear checksums mode (when run from checksum_tool) ***
+			
+			print Localize( { 'en' => <<EOF
+
+
+Clear checksums mode
+--------------------------------------------------------------------------------
+
+EOF
+			} ); # END localize
+			
+			# === Show command names and commandline syntax ===
+			foreach my $form ( @{$$_AVAILABLE_COMMANDS{'get_metadata'}{'syntax'}} ) {
+				my $localized_form = Localize($form);
+				my $pattern = "%s %-" . length($$_AVAILABLE_COMMANDS{'clear_checksums'}{'long'}) ."s %s\n";
+				printf( $pattern, $COMMAND, $$_AVAILABLE_COMMANDS{'clear_checksums'}{'long'}, $localized_form );
+				printf( $pattern, $COMMAND, $$_AVAILABLE_COMMANDS{'clear_checksums'}{'short'}, $localized_form );
+				$pattern = "%-" . ( length($COMMAND) + length($$_AVAILABLE_COMMANDS{'clear_checksums'}{'long'}) ) . "s  %s\n";
+				printf( $pattern, 'clear_checksums', $localized_form );
+			}
+			
+			print "\n";
+			
+			# === Show available options ===
+			ShowSupportedOptions('clear_checksums', $_AVAILABLE_COMMANDS, $_AVAILABLE_OPTIONS, $_STRINGS);
+			
+			# === Show command usage ===
+			print Localize($$_AVAILABLE_COMMANDS{'clear_checksums'}{'usage_long'}) . "\n";
+			
+			
+			
+			# *** Prune directories mode (when run from checksum_tool --help-all) ***
+			
+			print Localize( { 'en' => <<EOF
+
+
+Prune directories mode
+--------------------------------------------------------------------------------
+
+EOF
+			} ); # END localize
+			
+			# === Show command names and commandline syntax ===
+			foreach my $form ( @{$$_AVAILABLE_COMMANDS{'prune_dirs'}{'syntax'}} ) {
+				my $localized_form = Localize($form);
+				my $pattern = "%s %-" . length($$_AVAILABLE_COMMANDS{'prune_dirs'}{'long'}) ."s %s\n";
+				printf( $pattern, $COMMAND, $$_AVAILABLE_COMMANDS{'prune_dirs'}{'long'}, $localized_form );
+				printf( $pattern, $COMMAND, $$_AVAILABLE_COMMANDS{'prune_dirs'}{'short'}, $localized_form );
+				$pattern = "%-" . ( length($COMMAND) + length($$_AVAILABLE_COMMANDS{'prune_dirs'}{'long'}) ) . "s  %s\n";
+				printf( $pattern, 'prune_dirs', $localized_form );
+			}
+			
+			print "\n";
+			
+			# === Show available options ===
+			ShowSupportedOptions('prune_dirs', $_AVAILABLE_COMMANDS, $_AVAILABLE_OPTIONS, $_STRINGS);
+			
+			# === Show command usage ===
+			print Localize($$_AVAILABLE_COMMANDS{'prune_dirs'}{'usage_long'}) . "\n";
+			
+			
+			
+			# *** Restore mode (when run from checksum_tool --help-all) ***
+			
+			print Localize( { 'en' => <<EOF
+
+
+Restore mode
+--------------------------------------------------------------------------------
+
+EOF
+			} ); # END localize
+			
+			# === Show command names and commandline syntax ===
+			foreach my $form ( @{$$_AVAILABLE_COMMANDS{'restore'}{'syntax'}} ) {
+				my $localized_form = Localize($form);
+				my $pattern = "%s %-" . length($$_AVAILABLE_COMMANDS{'restore'}{'long'}) ."s %s\n";
+				printf( $pattern, $COMMAND, $$_AVAILABLE_COMMANDS{'restore'}{'long'}, $localized_form );
+				printf( $pattern, $COMMAND, $$_AVAILABLE_COMMANDS{'restore'}{'short'}, $localized_form );
+				$pattern = "%-" . ( length($COMMAND) + length($$_AVAILABLE_COMMANDS{'restore'}{'long'}) ) . "s  %s\n";
+				printf( $pattern, 'restore_to_xa_location', $localized_form );
+			}
+			
+			print "\n";
+			
+			# === Show available options ===
+			ShowSupportedOptions('restore', $_AVAILABLE_COMMANDS, $_AVAILABLE_OPTIONS, $_STRINGS);
+			
+			# === Show command usage ===
+			print Localize($$_AVAILABLE_COMMANDS{'restore'}{'usage_long'}) . "\n";
+			
+			
+			
+			# *** Update checksums mode (when run from checksum_tool --help-all) ***
+			
+			print Localize( { 'en' => <<EOF
+
+
+Update checksums mode
+--------------------------------------------------------------------------------
+
+EOF
+			} ); # END localize
+			
+			# === Show command names and commandline syntax ===
+			foreach my $form ( @{$$_AVAILABLE_COMMANDS{'update_checksums'}{'syntax'}} ) {
+				my $localized_form = Localize($form);
+				my $pattern = "%s %-" . length($$_AVAILABLE_COMMANDS{'update_checksums'}{'long'}) ."s %s\n";
+				printf( $pattern, $COMMAND, $$_AVAILABLE_COMMANDS{'update_checksums'}{'long'}, $localized_form );
+				printf( $pattern, $COMMAND, $$_AVAILABLE_COMMANDS{'update_checksums'}{'short'}, $localized_form );
+				$pattern = "%-" . ( length($COMMAND) + length($$_AVAILABLE_COMMANDS{'update_checksums'}{'long'}) ) . "s  %s\n";
+				printf( $pattern, 'update_checksums', $localized_form );
+			}
+			
+			print "\n";
+			
+			# === Show available options ===
+			ShowSupportedOptions('update_checksums', $_AVAILABLE_COMMANDS, $_AVAILABLE_OPTIONS, $_STRINGS);
+			
+			# === Show command usage ===
+			print Localize($$_AVAILABLE_COMMANDS{'update_checksums'}{'usage_long'}) . "\n";
+			
+			
+			
+			# *** Verify checksums mode (when run from checksum_tool --help-all) ***
+			
+			print Localize( { 'en' => <<EOF
+
+
+Verify checksums mode
+--------------------------------------------------------------------------------
+
+EOF
+			} ); # END localize
+			
+			# === Show command names and commandline syntax ===
+			foreach my $form ( @{$$_AVAILABLE_COMMANDS{'verify_checksums'}{'syntax'}} ) {
+				my $localized_form = Localize($form);
+				my $pattern = "%s %-" . length($$_AVAILABLE_COMMANDS{'verify_checksums'}{'long'}) ."s %s\n";
+				printf( $pattern, $COMMAND, $$_AVAILABLE_COMMANDS{'verify_checksums'}{'long'}, $localized_form );
+				printf( $pattern, $COMMAND, $$_AVAILABLE_COMMANDS{'verify_checksums'}{'short'}, $localized_form );
+				$pattern = "%-" . ( length($COMMAND) + length($$_AVAILABLE_COMMANDS{'verify_checksums'}{'long'}) ) . "s  %s\n";
+				printf( $pattern, 'verify_checksums', $localized_form );
+			}
+			
+			print "\n";
+			
+			# === Show available options ===
+			ShowSupportedOptions('verify_checksums', $_AVAILABLE_COMMANDS, $_AVAILABLE_OPTIONS, $_STRINGS);
+			
+			# === Show command usage ===
+			print Localize($$_AVAILABLE_COMMANDS{'verify_checksums'}{'usage_long'}) . "\n";
+			
+			print Localize( { 'en' => <<EOF
+
+EOF
+			} ); # END localize
+		}
+	} # *** END Command-specfic usage text handler ***
+	
+	# === Show common footer for usage text ===
+	print Localize( $$_STRINGS{'standard-footer'} ) ."\n";
+}
+
+
+
+
+
+
+
+
+# ******************************************************************************
+# ***  Command and option definitions                                        ***
+# ******************************************************************************
+
+
+
+# ==============================================================================
+# ===  Command definitions                                                  ====
+# ==============================================================================
+
+
+# Each command has the following structure:
+# 
+#   COMMAND_NAME => { 
+#     
+#     'short' => STRING, 
+#       # Optional, defaults to undef
+#       # Short option name when called via checksum_tool
+#     
+#     'long'  => STRING, 
+#       # Required
+#       # Long option name when called via checksum_tool
+#     
+#     'alias' => STRING, 
+#       # Optional, default to undef
+#       # Name when called directly (i.e. the command's name on disk)
+#     
+#     'supported-options' => [ OPTION_NAME, ... ],
+#       # Optional, defaults to undef
+#       # List of all options supported by the command
+#     
+#     'syntax' => [ LOCALIZED_STRING, ... ],
+#       # Required
+#       # List of human-readable summaries of all option formats that the 
+#       # command supports
+#     
+#     'usage' => LOCALIZED_STRING,
+#       # Required
+#       # Brief, human-readable description of the command when called 
+#       # directly from checksum_tool.  Option names should match short and 
+#       # long, above, but the actual description should be localized.
+#     
+#     'usage_long' => LOCALIZED_STRING,
+#       # Required
+#       # Detailed, human-readable description of how to use the command.
+#       # This is displayed when showing --help or --help-all.
+#     
+#     'two-phase' => BOOLEAN, 
+#       # Required
+#       # If true then both phase 1 and phase 2 scans will be run.
+#       # If false then only phase 1 scans will be run.
+#     
+#     'use-checksums' => BOOLEAN,
+#       # Optional, defaults to true
+#       # If true then load (and possibly compute) checksums when scanning 
+#       # directories.  If false then only basic file metadata is gathered.
+#     
+#     'phases' => BOOLEAN,
+#       # Required
+#       # (may be set in initialize callback)
+#       # The number of phases to use (either 1 or 2):
+#       #     1: All objects are processed using phase 1 functions.
+#       #     2: All objects but the last are processed using phase 1 functions.
+#       #        The last object is processed using phase 2 functions.
+#     
+#     'skip-if-no_md5sums-present' => BOOLEAN,
+#       # Optional, defaults to true
+#       # If set then don't process a directory if it has a .no_md5sums file.
+#       # If one is found then only the phase-1-dir-enter, phase-2-dir-enter, 
+#       # phase-1-dir-leave, and phase-2-dir-leave functions will be run.
+# 
+#     'initialize' => SUBROUTINE,
+#       # Required
+#       # Called once before any scans are started
+#       # 
+#       # Arguments:
+#       # $_user      -> Global user-defined datastructure
+#       # $_OBJECTS   -> Array of files and directories to process
+#       # $_OPTIONS   -> Hash with parsed commandline arguments
+#     
+#     'phase-1-per-tree-pre' => SUBROUTINE,
+#       # Optional, defaults to undef
+#       # Called before each phase 1 scan
+#       # (i.e. once for each object passed on the commandline)
+#       #
+#       # Arguments:
+#       # $_user      -> Global user-defined datastructure
+#       #                This can be used to maintain state.
+#       # $object     -> Name of the object that is about to be scanned
+#       # $_OPTIONS   -> Hash with parsed commandline arguments
+#     
+#     'phase-1-dir-enter' => SUBROUTINE,
+#       # Optional, defaults to undef
+#       # Called during phase 1 immediately upon entering a directory
+#       #
+#       # Arguments:
+#       # $_user      -> Global user-defined datastructure
+#       #                This can be used to maintain state.
+#       # $directory  -> Name of the current directory
+#       # $_OPTIONS   -> Hash with parsed commandline arguments
+#     
+#     'phase-1-per-object' => SUBROUTINE,
+#       # Optional, defaults to undef
+#       # Called during phase 1 for each object in a directory
+#       #
+#       # Arguments:
+#       # $_user      -> Global user-defined datastructure
+#       #                This can be used to maintain state.
+#       # $directory  -> Name of the current directory
+#       # $object     -> Current object name within the directory
+#       #                (the object may have non-file type; check its metadata)
+#       # $_metadata  -> Hash with current file's metadata
+#       # $_OPTIONS   -> Hash with parsed commandline arguments
+#     
+#     'phase-1-per-subdirectory' => SUBROUTINE,
+#       # Optional, defaults to undef
+#       # Called during phase 1 after returning from scanning a subdirectory
+#       #
+#       # Arguments:
+#       # $_user      -> Global user-defined datastructure
+#       #                This can be used to maintain state.
+#       # $directory  -> Name of the current directory
+#       # $object     -> Name of subdirectory that was just scanned
+#       # $returned   -> The value returned by the subdirectory scan call
+#       $_metadata  -> Hash with current file's metadata
+#       # $_OPTIONS   -> Hash with parsed commandline arguments
+#     
+#     'phase-1-dir-leave' => SUBROUTINE,
+#       # Optional, defaults to undef
+#       # Called during phase 1 immediately before returning from a directory
+#       # If you need to return a value after scanning a directory is should be done here.
+#       #
+#       # Arguments:
+#       # $_user      -> Global user-defined datastructure
+#       #                This can be used to maintain state.
+#       # $directory  -> Name of the current directory
+#       XXXXXXXXX # $_seen      -> Array with each seen file's name
+#       XXXXXXXX# $_metadata  -> Hash with each file's metadata
+#       # $_OPTIONS   -> Hash with parsed commandline arguments
+#     
+#     'phase-1-per-tree-post' => SUBROUTINE,
+#       # Optional, defaults to undef
+#       # Called during phase 1 after scanning an object
+#       # (i.e. once for each object passed on the commandline)
+#       #
+#       # Arguments:
+#       # $_user      -> Global user-defined datastructure
+#       #                This can be used to maintain state.
+#       # $object     -> Name of the object that was just scanned
+#       # $returned   -> The value returned by the scan call
+#       # $_OPTIONS   -> Hash with parsed commandline arguments
+#     
+#     'phase-2-pre' => SUBROUTINE,
+#       # Optional, defaults to undef
+#       # Called during phase 2 before beginning scan of the top-level directory
+#       #
+#       # Arguments:
+#       # $_user      -> Global user-defined datastructure
+#       #                This can be used to maintain state.
+#       # $object     -> Name of the object that is about to be scanned
+#       # $_OPTIONS   -> Hash with parsed commandline arguments
+#     
+#     'phase-2-dir-enter' => SUBROUTINE,
+#       # Optional, defaults to undef
+#       # Called during phase 2 immediately upon entering a directory
+#       #
+#       # Arguments:
+#       # $_user      -> Global user-defined datastructure
+#       #                This can be used to maintain state.
+#       # $directory  -> Name of the current directory
+#       # $_OPTIONS   -> Hash with parsed commandline arguments
+#     
+#     'phase-2-per-object' => SUBROUTINE,
+#       # Optional, defaults to undef
+#       # Called during phase 2 for each object in a directory
+#       #
+#       # Arguments:
+#       # $_user      -> Global user-defined datastructure
+#       #                This can be used to maintain state.
+#       # $directory  -> Name of the current directory
+#       # $object     -> Current object name within the directory
+#       #                (the object may have non-file type; check its metadata)
+#       # $_metadata  -> Hash with current file's metadata
+#       # $_OPTIONS   -> Hash with parsed commandline arguments
+#     
+#     'phase-2-per-subdirectory' => SUBROUTINE,
+#       # Optional, defaults to undef
+#       # Called during phase 2 after returning from scanning a subdirectory
+#       #
+#       # Arguments:
+#       # $_user      -> Global user-defined datastructure
+#       #                This can be used to maintain state.
+#       # $directory  -> Name of the current directory
+#       # $object     -> Name of subdirectory that was just scanned
+#       # $returned   -> The value returned by the subdirectory scan call
+#       # $_metadata  -> Hash with current file's metadata
+#       # $_OPTIONS   -> Hash with parsed commandline arguments
+#     
+#     'phase-2-dir-leave'    => SUBROUTINE,
+#       # Optional, defaults to undef
+#       # Called during phase 2 immediately before returning from a directory
+#       #
+#       # Arguments:
+#       # $_user      -> Global user-defined datastructure
+#       #                This can be used to maintain state.
+#       # $directory  -> Name of the current directory
+#       XXXXXX# $_seen      -> Array with each seen file's name
+#       XXXXXX# $_metadata  -> Hash with each file's metadata
+#       # $_OPTIONS   -> Hash with parsed commandline arguments
+#     
+#     'phase-2-post' => SUBROUTINE,
+#       # Optional, defaults to undef
+#       # Called during phase 2 on return from scan of the top-level directory
+#       #
+#       # Arguments:
+#       # $_user      -> Global user-defined datastructure
+#       #                This can be used to maintain state.
+#       # $object     -> Name of the object that was just scanned
+#       # $returned   -> The value returned by the scan call
+#       # $_OPTIONS   -> Hash with parsed commandline arguments
+#     
+#     'finalize' => SUBROUTINE,
+#       # Optional, defaults to undef
+#       # Called after all scans have been completed
+#       #
+#       # Arguments:
+#       # $_user      -> Global user-defined datastructure
+#       #                This can be used to maintain state.
+#       # $_OPTIONS   -> Hash with parsed commandline arguments
+#     
+#   }
+# 
+# 
+# Phase 1 scans are always performed.
+# Phase 2 commands are only run when the 'two-phase' option is true.
+#
+# COMMAND_NAME is the name used internally to refer to the command.  Ideally it 
+# should match the command's symlink on disk and should thus be the same as the 
+# value stored under the 'alias' key.
+#
+# Each OPTION_NAME is the option's top-level key in the hash defined in 
+# GetAvailableOptions(...)
+# 
+# Each STRING is a non-localized string which should:
+#   1) Use only 7-bit ASCII characters that are valid in Unix filenames
+#   2) Be written in English
+# 
+# Each LOCALIZED_STRING is a hash suitable for passing to Localize(...)
+# 
+# String line lengths should be at most 80 UTF-8 characters.
+# 
+# Each BOOLEAN is true if not zero, empty, or undef, false otherwise.
+# 
+# Each SUBROUTINE is a reference to a subroutine to be called at a particular 
+# point during the scan.  This can either be an anonymous subroutine (e.g. 
+# "sub { ... }") or a reference to a named function (e.g. "\&subroutine_name").
+# If set to undef then no action will be taken.
+#
+# If a particular command needs to set its own options for internal use that 
+# are not settable from the commandline it must do so in in its %user hash, not 
+# the global %OPTIONS hash.  e.g. command-specific internal options could be 
+# set under $$_user{'options'}{...}.
+#
+# In addition, commands are free to assign keys starting with 'user-' for their 
+# own use.
+
+
+sub GetAvailableCommands($$) {
+	my ($_COMMANDS, $_STRINGS) = @_;
+	
+	# The 'syntax', 'usage', and 'usage_long' strings are passed through 
+	# Localaize(...) before they are displayed; all other strings are displayed 
+	# as-is.
+	
+	%$_COMMANDS = (
+	
+		# *** checksum_tool ***
+		'checksum_tool' => { 
+			'short' => undef, 
+			'long'  => undef, 
+			'alias' => 'checksum_tool',
+			
+			'supported-options' => undef,
+			'syntax' => [ { 'en' => '( FILE | DIRECTORY ) [ ... ] [ OPTIONS ]' } ],
+			
+			'usage' => undef,
+			'usage_long' => undef,
+			
+			# === Configuration options ===
+			
+			'phases' => undef,                 # Required (set to either 1 or 2)
+			                                   # This must be set by the command (either as an 
+			                                   # option on by the initialize callback.
+			'use-checksums' => 1,              # Optional, defaults to true.
+			'skip-if-no_md5sums-present' => 1, # Optional, defaults to true.
+			
+			# === Dummy callback stubs ===
+			
+			# These can be copied to new commands.
+			#
+			# If not used they should be set to undef.
+			
+			# *** initialize ***
+			'initialize' => sub {
+				my ( $_user, $_OBJECTS, $_OPTIONS ) = @_;
+			},
+			
+			# *** phase-1-per-tree-pre ***
+			'phase-1-per-tree-pre' => sub {
+				my ( $_user,  $object,  $_OPTIONS ) = @_;
+			},
+			
+			# *** phase-1-dir-enter ***
+			'phase-1-dir-enter' => sub {
+				my ( $_user,  $directory,  $_OPTIONS ) = @_;
+			},
+			
+			# *** phase-1-per-object ***
+			'phase-1-per-object' => sub {
+				my ( $_user, $directory, $object, $_metadata, $_OPTIONS ) = @_;
+			},
+			
+			# *** phase-1-per-subdirectory ***
+			'phase-1-per-subdirectory' => sub {
+				my ( $_user, $directory, $object, $returned, $_metadata, $_OPTIONS ) = @_;
+			},
+			
+			# *** phase-1-dir-leave ***
+			'phase-1-dir-leave' => sub {
+				my ( $_user, $directory, $_OPTIONS ) = @_;
+			},
+			
+			# *** phase-1-per-tree-post ***
+			'phase-1-per-tree-post' => sub {
+				my ( $_user, $object, $returned, $_OPTIONS ) = @_;
+			},
+			
+			# *** phase-2-pre ***
+			'phase-2-pre' => sub {
+				my ( $_user,  $object,  $_OPTIONS ) = @_;
+			},
+			
+			# *** phase-2-dir-enter'   ***
+			'phase-2-dir-enter'    => sub {
+				my ( $_user,  $directory,  $_OPTIONS ) = @_;
+			},
+			
+			# *** phase-2-per-object ***
+			'phase-2-per-object' => sub {
+				my ( $_user, $directory, $object, $_metadata, $_OPTIONS ) = @_;
+			},
+			
+			# *** phase-2-per-subdirectory ***
+			'phase-2-per-subdirectory' => sub {
+				my ( $_user, $directory, $object, $returned, $_metadata, $_OPTIONS ) = @_;
+			},
+			
+			# *** phase-2-dir-leave'   ***
+			'phase-2-dir-leave'    => sub {
+				my ( $_user, $directory, $_OPTIONS ) = @_;
+			},
+			
+			# *** phase-2-post ***
+			'phase-2-post' => sub {
+				my ( $_user, $object, $returned, $_OPTIONS ) = @_;
+			},
+			
+			# *** finalize ***
+			'finalize' => sub {
+				my ( $_user, $_OPTIONS ) = @_;
+			},
+			
+		},
+		
+		
+		
+		
+		# ==========================================================================
+		
+		
+		
+		
+		# *** help ***
+		'help' => {
+			'short' => '-h', 
+			'long' => '--help', 
+			'alias' => undef,
+			'supported-options' => undef,
+			'syntax' => undef,
+			'usage' => { 'en' => <<EOF
+-h | --help                Show brief usage message
+EOF
+			},
+			'usage_long' => undef
+		},
+		
+		
+		
+		
+		# ==========================================================================
+		
+		
+		
+		
+		# *** help-all ***
+		'help-all' => { 
+			'short' => '-H', 
+			'long' => '--help-all', 
+			'alias' => undef,
+			'supported-options' => undef,
+			'syntax' => undef,
+			'usage' => { 'en' => <<EOF
+-H | --help-all            Show detailed usage message
+EOF
+			},
+			'usage_long' => undef
+		},
+		
+		
+		
+		
+		# ==========================================================================
+		
+		
+		
+		
+		# *** help-core ***
+		'help-core' => { 
+			'short' => undef, 
+			'long' => '--help-core', 
+			'alias' => undef,
+			'supported-options' => undef,
+			'syntax' => undef,
+			'usage' => { 'en' => <<EOF
+--help-core                Show options supported by all commands
+EOF
+			},
+			'usage_long' => undef
+		},
+		
+		
+		
+		
+		# ==========================================================================
+		
+		
+		
+		
+		# *** clear_checksums ***
+		'clear_checksums' => { 
+			'short' => '-X', 
+			'long'  => '--clear-checksums', 
+			'alias' => 'clear_checksums',
+			'supported-options' => [ 'recurse', 'no-recurse', 'one-filesystem' ],
+			'syntax' => [
+				{ 'en' => '( FILE | DIRECTORY ) [ ... ] [ OPTIONS ]' }
+			], 
+			'usage' => { 'en' => <<EOF
+-X | --clear-checksums     Clear computed checksums
+EOF
+			},
+			'usage_long' => { 'en' => <<EOF
+In the case of files, removes checksum metadata from the files' user-defined 
+extended attributes (namely user._, user.md5, user.md5_size, and user.md5_time) 
+as well as from their directory's .md5sums file.
+
+In the case of directories, each directory's .md5sums file is removed and the 
+extended attributes listed above are removed from each file in the directory.
+EOF
+			},
+			'use-checksums' => 1,
+			'phases' => 1, 
+			'skip-if-no_md5sums-present' => 1,
+			
+			# *** clear_checksums  :  initialize ***
+			'initialize' => undef,
+			
+			# *** clear_checksums  :  phase-1-per-tree-pre ***
+			'phase-1-per-tree-pre' => undef,
+			
+			# *** clear_checksums  :  phase-1-dir-enter ***
+			'phase-1-dir-enter' => undef,
+			
+			# *** clear_checksums  :  phase-1-per-object ***
+			'phase-1-per-object' => sub {
+				my ( $_user, $directory, $object, $_metadata, $_OPTIONS ) = @_;
+				
+				if ( $$_metadata{'type'} eq 'file' ) {
+					# Object is a regular file
+					ClearXA( File::Spec->catfile( $directory, $object ), $_OPTIONS );
+				}
+				
+				return;
+			},
+			
+			# *** clear_checksums  :  phase-1-per-subdirectory ***
+			'phase-1-per-subdirectory' => undef,
+			
+			# *** clear_checksums  :  phase-1-dir-leave ***
+			'phase-1-dir-leave' => sub {
+				my ( $_user, $directory, $_OPTIONS ) = @_;
+				
+				unlink File::Spec->catfile( $directory, ".md5sums");
+			},
+			
+			
+			# *** clear_checksums  :  phase-1-per-tree-post ***
+			'phase-1-per-tree-post' => undef,
+			
+			# *** clear_checksums  :  phase-2-pre ***
+			'phase-2-pre' => undef,
+			
+			# *** clear_checksums  :  phase-2-dir-enter'   ***
+			'phase-2-dir-enter'    => undef,
+			
+			# *** clear_checksums  :  phase-2-per-object ***
+			'phase-2-per-object' => undef,
+			
+			# *** clear_checksums  :  phase-2-per-subdirectory ***
+			'phase-2-per-subdirectory' => undef,
+			
+			# *** clear_checksums  :  phase-2-dir-leave'   ***
+			'phase-2-dir-leave'    => undef,
+			
+			# *** clear_checksums  :  phase-2-post ***
+			'phase-2-post' => undef,
+			
+			# *** clear_checksums  :  finalize ***
+			'finalize' => undef,
+		},
+		
+		
+		
+		
+		# ==========================================================================
+		
+		
+		
+		
+		# *** cull_dupes ***
+		'cull_dupes' => { 
+			'short' => '-C', 
+			'long'  => '--cull-dupes', 
+			'alias' => 'cull_dupes',
+			'supported-options' => [ 'no-act', 'discard-existing', 'move-dupes', 
+			                         'same-name', 'overwrite', 'preserve', 
+			                         'built-in-copy', 
+			                         'recurse', 'no-recurse', 'one-filesystem' ],
+			'syntax' => [
+				{ 'en' => 'OBJECTS KEEP_DIRECTORY [ OPTIONS ]' },
+				{ 'en' => 'DIRECTORY [ OPTIONS ]' }
+			], 
+			'usage' => { 'en' => <<EOF
+-C | --cull-dupes          Delete duplicate files (for safety, -C is uppercase)
+EOF
+			},
+			'usage_long' => { 'en' => <<EOF
+OBJECTS := ( FILE | DIRECTORY ) [ ... ]
+
+Delete any files in OBJECTS that exist in KEEP_DIRECTORY.  When called with a 
+single directory then delete any duplicate files in the directory (one copy is
+kept).
+
+Checksums will be computed and stored for all files that are missing them.
+
+This operates the same as find_dupes except that all files determined to be 
+duplicates are deleted.
+EOF
+			},
+			
+			# === Configuration options ===
+			
+			'phases' => undef,                 # Required (set to either 1 or 2)
+			                                   # This must be set by the command (either as an 
+			                                   # option on by the initialize callback.
+			'use-checksums' => 1,              # Optional, defaults to true.
+			'skip-if-no_md5sums-present' => 1, # Optional, defaults to true.
+			
+			# *** cull_dupes  :  initialize ***
+ALIAS	'initialize'  => '{find_dupes}{initialize}',
+			
+			# *** cull_dupes  :  phase-1-per-tree-pre ***
+			'phase-1-per-tree-pre' => undef,
+			
+			# *** cull_dupes  :  phase-1-dir-enter ***
+			'phase-1-dir-enter' => undef,
+			
+			# *** cull_dupes  :  phase-1-per-object ***
+ALIAS	'phase-1-per-object' => '{find_dupes}{phase-1-per-object}',
+			
+			# *** cull_dupes  :  phase-1-per-subdirectory ***
+			'phase-1-per-subdirectory' => undef,
+			
+			# *** cull_dupes  :  phase-1-dir-leave ***
+			'phase-1-dir-leave' => undef,
+			
+			# *** cull_dupes  :  phase-1-per-tree-post ***
+			'phase-1-per-tree-post' => undef,
+			
+			# *** cull_dupes  :  phase-2-pre ***
+			'phase-2-pre' => undef,
+			
+			# *** cull_dupes  :  phase-2-dir-enter'   ***
+			'phase-2-dir-enter'    => undef,
+			
+			# *** cull_dupes  :  phase-2-per-object ***
+ALIAS	'phase-2-per-object' => '{find_dupes}{phase-2-per-object}',
+			
+			# *** cull_dupes  :  phase-2-per-subdirectory ***
+			'phase-2-per-subdirectory' => undef,
+			
+			# *** cull_dupes  :  phase-2-dir-leave'   ***
+			'phase-2-dir-leave'    => undef,
+			
+			# *** cull_dupes  :  phase-2-post ***
+			'phase-2-post' => undef,
+			
+			# *** cull_dupes  :  user-finalize-loop ***
+			
+ALIAS	'user-finalize-loop' => '{find_dupes}{user-finalize-loop}',
+			
+			# *** cull_dupes  :  finalize ***
+			
+			'finalize' => sub {
+				my ( $_user, $_OPTIONS ) = @_;
+				
+				my $dupe = Localize( $$_STRINGS{'DUPE'} );
+				my $keep = Localize( $$_STRINGS{'keep'} );
+				
+				my $dupe_callback = sub {
+					my ( $md5, $display_md5, $file, $_user, $_OPTIONS ) = @_;
+					if ( $$_OPTIONS{'long-names'} ) {
+						printf("%-49s %s\t%s\t%s\t%s\n", $display_md5, $dupe, $file->{'escaped_name'}, $file->{'escaped_directory'}, $file->{escaped_full_path});
+					} else {
+						printf("%-49s %s\t%s\t%s\n",     $display_md5, $dupe, $file->{'escaped_name'}, $file->{'escaped_directory'});
+					}
+				};
+				
+				my $keep_callback = sub {
+					my ( $md5, $display_md5, $file, $_user, $_OPTIONS ) = @_;
+					if ( $$_OPTIONS{'long-names'} ) {
+						printf("%-49s %s\t%s\t%s\t%s\n", $display_md5, $keep, $file->{'escaped_name'}, $file->{'escaped_directory'}, $file->{escaped_full_path});
+					} else {
+						printf("%-49s %s\t%s\t%s\n",     $display_md5, $keep, $file->{'escaped_name'}, $file->{'escaped_directory'});
+					}
+				};
+				
+				&{ $$_OPTIONS{'_COMMAND'}{'user-finalize-loop'} }( $_user, $dupe_callback, $keep_callback, $_OPTIONS );
+				
+				print "\n";
+				
+				my $dupe_callback = sub {
+					my ( $md5, $display_md5, $file, $_user, $_OPTIONS ) = @_;
+					
+					my $fullpath = File::Spec->catfile( $file->{'directory'}, $file->{'name'} );
+					print Localize( $STRINGS{'UNLINK'} ) . " $fullpath\n";
+					unless ($$_OPTIONS{'no-act'}) {
+						#print "( unlinking )\n";
+						print "$?, $!\n" unless (unlink "$fullpath");
+					}
+					
+				};
+				
+				my $keep_callback = sub { };
+				
+				if ($$_OPTIONS{'no-act'}) {
+					print Localize( $STRINGS{'NOTE'} ) . " " . 
+					      Localize( $STRINGS{'no-act-active'} ) . "\n";
+					print "\n";
+				}
+				
+				&{ $$_OPTIONS{'_COMMAND'}{'user-finalize-loop'} }( $_user, $dupe_callback, $keep_callback, $_OPTIONS );
+			},
+			
+		},
+		
+		
+		
+		
+		# ==========================================================================
+		
+		
+		
+		
+		# *** find_dupes ***
+		'find_dupes' => { 
+			'short' => '-f', 
+			'long'  => '--find-dupes', 
+			'alias' => 'find_dupes',
+			'supported-options' => [ 'discard-existing', 'same-name', 'long-names', 
+			                         'escape-filenames', 
+			                         'recurse', 'no-recurse', 'one-filesystem' ],
+			'syntax' => [
+				{ 'en' => 'OBJECTS REFERENCE_DIRECTORY [ OPTIONS ]' }, 
+				{ 'en' => 'DIRECTORY [ OPTIONS ]' }
+			], 
+			'usage' => { 'en' => <<EOF
+-f | --find-dupes          Display duplicate files
+EOF
+			},
+			'usage_long' => { 'en' => <<EOF
+OBJECTS := ( FILE | DIRECTORY ) [ ... ]
+
+Display any files in OBJECTS that exist in REFERENCE_DIRECTORY.  When called 
+with a single directory then any duplicate files found in it are displayed.
+
+Checksums will be computed and stored for all files that are missing them.
+
+Output is multiple lines for each matched fingerprint (MD5:size).  The first 
+line for each set of duplicates has the fingerprint followed by spaces with 
+additional lines being prefixed with spaces.  When called with a single 
+directory, all files but the last are marked as 'DUPE' except the last which is 
+marked 'keep'; when a REFERENCE_DIRECTORY is given then multiple 'keep' lines 
+may be shown.  Files marked 'DUPE' are those that would be deleted, moved, or 
+replaced with links when the cull, move, or link modes are used.  The remainder 
+of each line is a tab, the filename, a tab, and the file's directory.  If the 
+--long-names option is given then each line ends with two tabs followed by the 
+full path of the file.
+
+Sample output (without --long-names):
+
+02c538f8e34d252ae22df357fcf75ea3:123              DUPE	filename_1	directory_1
+                                                  keep	filename_2	directory_2
+8b93959cee28415ffafd56da99c1a268:98765            DUPE	filename_3	directory_1
+                                                  DUPE	filename_4	directory_1
+                                                  keep	filename_5	directory_2
+                                                  keep	filename_6	directory_2
+
+Sample output (with --long-names):
+
+02c538f8e34d252ae22df357fcf75ea3:123              DUPE	filename_1	directory_1		directory_1/filename_1
+                                                  keep	filename_2	directory_2		directory_2/filename_2
+8b93959cee28415ffafd56da99c1a268:98765            DUPE	filename_3	directory_1		directory_1/filename_3
+                                                  DUPE	filename_4	directory_1		directory_1/filename_4
+                                                  keep	filename_5	directory_2		directory_2/filename_5
+                                                  keep	filename_6	directory_2		directory_2/filename_6
+EOF
+			},
+			
+			# === Configuration options ===
+			
+			'phases' => undef,                 # Required (set to either 1 or 2)
+			                                   # This must be set by the command (either as an 
+			                                   # option on by the initialize callback.
+			'use-checksums' => 1,              # Optional, defaults to true.
+			'skip-if-no_md5sums-present' => 1, # Optional, defaults to true.
+			
+			# *** find_dupes  :  initialize ***
+			'initialize' => sub {
+				my ( $_user, $_OBJECTS, $_OPTIONS ) = @_;
+				#print "find_dupes  :  initialize\n";
+				
+				if ( scalar(@$_OBJECTS) == 1 ) {
+					
+					unless ( -d $$_OBJECTS[0] ) {
+						print STDERR Localize( $STRINGS{'ERROR'} ) . " " . 
+						             Localize( { 'en' => "Single-object mode only works for a directory." } ) . "\n";
+						exit;
+					}
+					
+					$$_OPTIONS{'_COMMAND'}{'phases'} = 1;
+					
+				} else {
+					
+					unless ( -d $$_OBJECTS[-1] ) {
+						print STDERR Localize( $STRINGS{'ERROR'} ) . " " . 
+						             Localize( { 'en' => "In multi-object mode the final argument must be a directory." } ) . "\n";
+						exit;
+					}
+					
+					$$_OPTIONS{'_COMMAND'}{'phases'} = 2;
+				}
+				
+				$$_OPTIONS{'compute-missing'} = 1 unless defined ($$_OPTIONS{'compute-missing'});
+			},
+			
+			# *** find_dupes  :  phase-1-per-tree-pre ***
+			'phase-1-per-tree-pre' => undef,
+			
+			# *** find_dupes  :  phase-1-dir-enter ***
+			'phase-1-dir-enter' => undef,
+			
+			# *** find_dupes  :  phase-1-per-object ***
+			'phase-1-per-object' => sub {
+				my ( $_user, $directory, $object, $_metadata, $_OPTIONS ) = @_;
+				#print "phase-1-per-object\n";
+				
+				my $md5      = $$_metadata{'md5'};
+				my $md5_size = $$_metadata{'md5_size'};
+				my $name     = $$_metadata{'name'};
+				if ( defined $md5 ) {
+					if ( $$_OPTIONS{'same-name'}) {
+						push @{ $$_user{'src'}{ "$md5:$md5_size:".lc($name) } }, { 'directory'=>$directory, 'name'=>$object, 'metadata'=>$_metadata };
+					} else {
+						push @{ $$_user{'src'}{ "$md5:$md5_size" } }, { 'directory'=>$directory, 'name'=>$object, 'metadata'=>$_metadata };
+					}
+				}
+			},
+			
+			# *** find_dupes  :  phase-1-per-subdirectory ***
+			'phase-1-per-subdirectory' => undef,
+			
+			# *** find_dupes  :  phase-1-dir-leave ***
+			'phase-1-dir-leave' => undef,
+			
+			# *** find_dupes  :  phase-1-per-tree-post ***
+			'phase-1-per-tree-post' => undef,
+			
+			# *** find_dupes  :  phase-2-pre ***
+			'phase-2-pre' => undef,
+			
+			# *** find_dupes  :  phase-2-dir-enter'   ***
+			'phase-2-dir-enter'    => undef,
+			
+			# *** find_dupes  :  phase-2-per-object ***
+			'phase-2-per-object' => sub {
+				my ( $_user, $directory, $object, $_metadata, $_OPTIONS ) = @_;
+				#print "phase-2-per-object\n";
+				
+				my $md5      = $$_metadata{'md5'};
+				my $md5_size = $$_metadata{'md5_size'};
+				my $name     = $$_metadata{'name'};
+				if ( defined $md5 ) {
+					if ( $$_OPTIONS{'same-name'}) {
+						push @{ $$_user{'dst'}{ "$md5:$md5_size:".lc($name) } }, { 'directory'=>$directory, 'name'=>$object, 'metadata'=>$_metadata };
+					} else {
+						push @{ $$_user{'dst'}{ "$md5:$md5_size" } }, { 'directory'=>$directory, 'name'=>$object, 'metadata'=>$_metadata };
+					}
+				}
+			},
+			
+			# *** find_dupes  :  phase-2-per-subdirectory ***
+			'phase-2-per-subdirectory' => undef,
+			
+			# *** find_dupes  :  phase-2-dir-leave'   ***
+			'phase-2-dir-leave'    => undef,
+			
+			# *** find_dupes  :  phase-2-post ***
+			'phase-2-post' => undef,
+			
+			# *** find_dupes  :  user-finalize-loop ***
+			
+			'user-finalize-loop' => sub {
+				my ( $_user, $dupe_callback, $keep_callback, $_OPTIONS ) = @_;
+				#print "user-finalize-loop( $_user, $dupe_callback, $keep_callback, $_OPTIONS )\n";
+				
+				my $encode_filename = sub {
+					my ( $file ) = @_;
+					$file->{'escaped_directory'} = ( $$_OPTIONS{'escape-filenames'} ) 
+					                             ? EscapeString( $file->{'directory'}, $$_OPTIONS{'escape-filenames'} )
+					                             : $file->{'directory'};
+					$file->{'escaped_name'}      = ( $$_OPTIONS{'escape-filenames'} ) 
+					                             ? EscapeString( $file->{'name'}, $$_OPTIONS{'escape-filenames'} )
+					                             : $file->{'name'};
+					$file->{'escaped_full_path'} = ( $$_OPTIONS{'escape-filenames'} ) 
+					                             ? EscapeString( File::Spec->catfile( $file->{'directory'}, $file->{'name'} ), $$_OPTIONS{'escape-filenames'} )
+					                             : File::Spec->catfile( $file->{'directory'}, $file->{'name'} );
+				};
+				
+				if ( $$_OPTIONS{'_COMMAND'}{'phases'} == 1 ) {
+					# === Single phase ===
+					#print "Single phase\n";
+					
+					my $src = $$_user{'src'};
+					
+					# === Loop through all the checksums ===
+					foreach my $key (keys %$src) {
+						my $md5 = $key;
+						if (scalar @{$$src{$md5}} > 1) {
+							# === If multiple files found for the checksum ===
+							my $this = 1;
+							# === Gather the filenames, culling ignored filenames ===
+							my @tmp = ();
+							foreach my $file (@{$$src{$md5}}) {
+								push @tmp, $file unless ($ignore{$file->{name}});
+							}
+							my $last = scalar @tmp;
+							if (scalar @tmp > 1) {
+								# === Culled filename list has multiple entries ===
+								# === so display their checksum, names, and paths ===
+								foreach my $file (reverse @tmp) {
+									&$encode_filename($file);
+									if ($this == $last) {
+										&{ $keep_callback }( $md5, $md5, $file, $_user, $_OPTIONS );
+									} else {
+										&{ $dupe_callback }( $md5, $md5, $file, $_user, $_OPTIONS );
+									}
+									$this++;
+									$md5 = "";
+								}
+							}
+						}
+					}
+					
+					
+				} else {
+					# === Two phase ===
+					#print "Two phase\n";
+					
+					# === Gather checksums for all files in each directory ===
+					my $src = $$_user{'src'};
+					my $dst = $$_user{'dst'};
+					
+					# === Loop through all the checksums in the source directory ===
+					foreach my $key (keys %$src) {
+						#print "src: $key\n";
+						if (defined $$dst{$key}) {
+							# === If checksum match found in the destination directory ===
+							my $shown_key = $key;
+							foreach my $file (@{$$src{$key}}) {
+								#printf("%-49s DUPE\t%s\t%s\n", $shown_key, $file->{'name'}, $file->{'directory'});
+								&$encode_filename($file);
+								&{ $dupe_callback }( $key, $shown_key, $file, $_user, $_OPTIONS );
+								$shown_key = "";
+							}
+							# === Display destination directory's matching filenames and paths ===
+							foreach my $file (@{$$dst{$key}}) {
+								#printf("%-49s keep\t%s\t%s\n", $shown_key, $file->{'name'}, $file->{'directory'});
+								&$encode_filename($file);
+								&{ $keep_callback }( $key, $shown_key, $file, $_user, $_OPTIONS );
+								$shown_key = "";
+							}
+						}
+					}
+					
+				}
+			},
+			
+			# *** find_dupes  :  finalize ***
+			
+			'finalize' => sub {
+				my ( $_user, $_OPTIONS ) = @_;
+				
+				my $dupe = Localize( $$_STRINGS{'DUPE'} );
+				my $keep = Localize( $$_STRINGS{'keep'} );
+				
+				my $dupe_callback = sub {
+					my ( $md5, $display_md5, $file, $_user, $_OPTIONS ) = @_;
+					if ( $$_OPTIONS{'long-names'} ) {
+						printf("%-49s %s\t%s\t%s\t%s\n", $md5, $dupe, $file->{'escaped_name'}, $file->{'escaped_directory'}, $file->{escaped_full_path});
+					} else {
+						printf("%-49s %s\t%s\t%s\n",     $md5, $dupe, $file->{'escaped_name'}, $file->{'escaped_directory'});
+					}
+				};
+				
+				my $keep_callback = sub {
+					my ( $md5, $display_md5, $file, $_user, $_OPTIONS ) = @_;
+					if ( $$_OPTIONS{'long-names'} ) {
+						printf("%-49s %s\t%s\t%s\t%s\n", $md5, $keep, $file->{'escaped_name'}, $file->{'escaped_directory'}, $file->{escaped_full_path});
+					} else {
+						printf("%-49s %s\t%s\t%s\n",     $md5, $keep, $file->{'escaped_name'}, $file->{'escaped_directory'});
+					}
+				};
+				
+				&{ $$_OPTIONS{'_COMMAND'}{'user-finalize-loop'} }( $_user, $dupe_callback, $keep_callback, $_OPTIONS );
+			},
+			
+		},
+		
+		
+		
+		
+		# ==========================================================================
+		
+		
+		
+		
+		# *** find_orphans ***
+		'find_orphans' => { 
+			'short' => '-F', 
+			'long'  => '--find-orphans', 
+			'alias' => 'find_orphans',
+			'supported-options' => [ 'discard-existing', 'same-name', 'long-names', 
+			                         'escape-filenames', 
+			                         'recurse', 'no-recurse', 'one-filesystem' ],
+			'syntax' => [
+					{ 'en' => 'DIRECTORY_1 DIRECTORY_2 [ OPTIONS ]' }
+			], 
+			'usage' => { 'en' => <<EOF
+-F | --find-orphans        Display orphan files
+EOF
+			},
+			'usage_long' => { 'en' => <<EOF
+Show all files that exist only in one of the two directories (not both).
+
+Checksums will be computed and stored for all files that are missing them.
+
+Output is one line for each orphan file found.  Each line consists of the 
+directory, a tab, the filename, a tab, and the fingerprint (MD5:size).  If the 
+--long-names option is given then each line ends with two tabs followed by the 
+full path of the file.
+
+Sample output (without --long-names):
+
+directory_1	filename_1	02c538f8e34d252ae22df357fcf75ea3:123
+directory_2	filename_2	8b93959cee28415ffafd56da99c1a268:98765
+
+Sample output (with --long-names):
+
+directory_1	filename_1	02c538f8e34d252ae22df357fcf75ea3:123		directory_1/filename_1
+directory_2	filename_2	8b93959cee28415ffafd56da99c1a268:98765		directory_2/filename_2
+EOF
+			},
+			
+			# === Configuration options ===
+			
+			'phases' => 2,                     # Required (set to either 1 or 2)
+			                                   # This must be set by the command (either as an 
+			                                   # option on by the initialize callback.
+			'use-checksums' => 1,              # Optional, defaults to true.
+			'skip-if-no_md5sums-present' => 1, # Optional, defaults to true.
+			
+			# *** find_orphans  :  initialize ***
+			'initialize' => sub {
+				my ( $_user, $_OBJECTS, $_OPTIONS ) = @_;
+				
+				if ( scalar(@$_OBJECTS) == 1 ) {
+					
+					print STDERR Localize( $STRINGS{'ERROR'} ) . " " . 
+					             Localize( { 'en' => "find_orphans mode requires at least two objects to be specified." } ) . "\n";
+					exit;
+					
+				} else {
+					
+					unless ( -d $$_OBJECTS[-1] ) {
+						print STDERR Localize( $STRINGS{'ERROR'} ) . " " . 
+						             Localize( { 'en' => "The final argument must be a directory." } ) . "\n";
+						exit;
+					}
+				}
+				
+				$$_OPTIONS{'compute-missing'} = 1 unless defined ($$_OPTIONS{'compute-missing'});
+			},
+			
+			# *** find_orphans  :  phase-1-per-tree-pre ***
+			'phase-1-per-tree-pre' => undef,
+			
+			# *** find_orphans  :  phase-1-dir-enter ***
+			'phase-1-dir-enter' => undef,
+			
+			# *** find_orphans  :  phase-1-per-object ***
+ALIAS	'phase-1-per-object' => '{find_dupes}{phase-1-per-object}',
+			
+			# *** find_orphans  :  phase-1-per-subdirectory ***
+			'phase-1-per-subdirectory' => undef,
+			
+			# *** find_orphans  :  phase-1-dir-leave ***
+			'phase-1-dir-leave' => undef,
+			
+			# *** find_orphans  :  phase-1-per-tree-post ***
+			'phase-1-per-tree-post' => undef,
+			
+			# *** find_orphans  :  phase-2-pre ***
+			'phase-2-pre' => undef,
+			
+			# *** find_orphans  :  phase-2-dir-enter'   ***
+			'phase-2-dir-enter'    => undef,
+			
+			# *** find_orphans  :  phase-2-per-object ***
+ALIAS	'phase-2-per-object' => '{find_dupes}{phase-2-per-object}',
+			
+			# *** find_orphans  :  phase-2-per-subdirectory ***
+			'phase-2-per-subdirectory' => undef,
+			
+			# *** find_orphans  :  phase-2-dir-leave'   ***
+			'phase-2-dir-leave'    => undef,
+			
+			# *** find_orphans  :  phase-2-post ***
+			'phase-2-post' => undef,
+			
+			# *** find_orphans  :  finalize ***
+			
+			'finalize' => sub {
+				my ( $_user, $_OPTIONS ) = @_;
+				
+				my $src = $$_user{'src'};
+				my $dst = $$_user{'dst'};
+				
+				
+				# === List of orphaned files ===
+				my @orphans = ();
+				
+				# === Loop through all the checksums in the source directory ===
+				foreach my $key (sort keys %$src) {
+					unless (exists $$dst{$key}) {
+						# === If no checksum match found in the destination directory ===
+						
+						# === Add all files in source directory that have the checksum ===
+						# === to the list of orphaned files ===
+						foreach my $file (@{$$src{$key}}) {
+							#push @orphans, [ $file->{directory}, $file->{name}, $key ];
+							my $enc_dir  = ( $$_OPTIONS{'escape-filenames'} )  ?  EscapeString( $file->{directory}, $$_OPTIONS{'escape-filenames'}  )  :  $file->{directory};
+							my $enc_file = ( $$_OPTIONS{'escape-filenames'} )  ?  EscapeString( $file->{name},      $$_OPTIONS{'escape-filenames'}  )  :  $file->{name};
+							push @orphans, [ $enc_dir, $enc_file, $key ];
+							$key = "                                ";
+						}
+					}
+				}
+				
+				# === Loop through all the checksums in the destination directory ===
+				foreach my $key (sort keys %$dst) {
+					unless (exists $$src{$key}) {
+						# === If no checksum match found in the source directory ===
+						
+						# === Add all files in destination directory that have the checksum ===
+						# === to the list of orphaned files ===
+						foreach my $file (sort @{$$dst{$key}}) {
+							#push @orphans, [ $dir, $file->{name}, $key ];
+							my $enc_dir  = ( $$_OPTIONS{'escape-filenames'} )  ?  EscapeString( $file->{directory}, $$_OPTIONS{'escape-filenames'}  )  :  $file->{directory};
+							my $enc_file = ( $$_OPTIONS{'escape-filenames'} )  ?  EscapeString( $file->{name},      $$_OPTIONS{'escape-filenames'}  )  :  $file->{name};
+							push @orphans, [ $enc_dir, $enc_file, $key ];
+							$key = "                                ";
+						}
+					}
+				}
+				
+				# === Display list of orphan files ===
+				if ( $$_OPTIONS{'long-names'} ) {
+					foreach my $_entry ( sort { "$$a[0]/$$a[1]" cmp "$$b[0]/$$b[1]" } @orphans ) {
+						my $escaped = "$$_entry[0]/$$_entry[1]";
+						$escaped =~ s/([^.\/a-zA-Z0-9_-])/\\\1/gs unless ( $$_OPTIONS{'escape-filenames'} );
+						print "$$_entry[0]\t$$_entry[1]\t$$_entry[2]\t\t$escaped\n";
+					}
+				} else {
+					foreach my $_entry ( sort { "$$a[0]/$$a[1]" cmp "$$b[0]/$$b[1]" } @orphans ) {
+						print "$$_entry[0]\t$$_entry[1]\t$$_entry[2]\n";
+					}
+				}
+			},
+			
+		},
+		
+		
+		
+		
+		# ==========================================================================
+		
+		
+		
+		
+		# *** get_metadata ***
+		'get_metadata' => { 
+			'short' => '-g', 
+			'long'  => '--get-metadata', 
+			'alias' => 'get_metadata',
+			'supported-options' => [ 'compute-missing', 'discard-existing', 
+			                         'escape-filenames', 
+			                         'recurse', 'no-recurse', 'one-filesystem' ],
+			'syntax' => [
+				{ 'en' => '( FILE | DIRECTORY ) [ ... ] [ OPTIONS ]' }
+			], 
+			'usage' => { 'en' => <<EOF
+-g | --get-metadata        Display file metadata
+EOF
+			},
+			'usage_long' => { 'en' => <<EOF
+Dump file metadata. This can be useful, e.g., for recording the original 
+locations of files before restructuring a directory tree.
+
+Metadata for all files is written to STDOUT (one file per line).  Metadata is 
+reported as key/value pairs (KEY:VALUE) with a single tab between each pairs.  
+If an attribute is not present for a file (e.g. jpeg.md5 for a text file) then 
+the attribute is not listed (i.e. attributes do not have NULL values).  The 
+following attributes may be reported:
+
+    path        Current path (either relative or absolute)
+    name        Name
+    type        One of: dir file link block char fifo socket
+    mode        Mode bits (4-digit octal)
+    user        Owner: NUMBER (NAME)
+    group       Group: NUMBER (NAME)
+    size        Size (only for files)
+    mtime       Modification time (UNIX timestamp)
+    target      Symlink's target
+    device      Device major and minor values: MAJOR,MINOR
+    original    Original location (path and filename)
+    md5         MD5 checksum of entire file
+    md5.mtime   File's mtime when MD5 checksum was computed
+    md5.size    File's size when MD5 checksum was computed
+    md5.valid   Whether stored file checksum is probably accurate (yes or no).
+    md5.source  Source of checksum data (either attributes or md5sums)
+    
+    Extended attributes are also reported as xa.NAMESPACE.NAME
+    On platforms that don't support extended attribute namespaces all attributes
+    appear under the user namespace (e.g. xa.user.NAME).
+    
+    Of interest is xa.user.jpeg.md5 (xa.jpeg.md5 on some platforms) which, for 
+    JPEG files is the MD5 checksum  of file's JPEG data (as computed by 
+    jpeg_checksum_tools).
+
+Missing file checksums will be computed unlesss the --no-compute-missing option 
+is specified.
+EOF
+			},
+			'use-checksums' => 1,
+			'phases' => 1, 
+			'skip-if-no_md5sums-present' => 0, 
+			
+			# *** get_metadata  :  initialize ***
+			'initialize' => sub {
+				my ( $_user, $_OBJECTS, $_OPTIONS ) = @_;
+				#$$_user{'options'}{'have_exiftool'} = ( `exiftool 2>/dev/null` ) ? 1 : 0;
+				$$_OPTIONS{'compute-missing'} = 0 unless defined ($$_OPTIONS{'compute-missing'});
+			},
+			
+			# *** get_metadata  :  phase-1-per-tree-pre ***
+			'phase-1-per-tree-pre' => undef,
+			
+			# *** get_metadata  :  phase-1-dir-enter ***
+			'phase-1-dir-enter' => undef,
+			
+			# *** get_metadata  :  phase-1-per-object ***
+			'phase-1-per-object' => sub {
+				my ( $_user, $directory, $object, $_metadata, $_OPTIONS ) = @_;
+				
+				my %meta = ();
+				
+				# === Get any metadata from .md5sums ===
+				$meta{'md5'}        = $$_metadata{'md5'};
+				$meta{'md5.mtime'}  = $$_metadata{'md5_mtime'};
+				$meta{'md5.size'}   = $$_metadata{'md5_size'};
+				$meta{'md5.source'} = $$_metadata{'source'};
+				
+				
+				# === Get printable directory and file names ===
+				if ( $$_OPTIONS{'escape-filenames'} ) {
+					$meta{path} = EscapeString( $directory, $$_OPTIONS{'escape-filenames'} );  # Current path (either relative or absolute)
+					$meta{name} = EscapeString( $object,    $$_OPTIONS{'escape-filenames'} );  # Name
+					
+				} else {
+					$meta{path} = $directory;  # Current path (either relative or absolute)
+					$meta{name} = $object;     # Name
+					
+				}
+				
+				# === Get single file path for use later ===
+				my $filepath = File::Spec->catfile( $directory, $object );
+				
+				# === Determine file type ===
+				# One of: dir file link block char fifo socket
+				$meta{type} = ( -l $filepath ) ? 'link' # must be first test
+				            : ( -d $filepath ) ? 'dir'
+				            : ( -f $filepath ) ? 'file'
+				            : ( -b $filepath ) ? 'block'
+				            : ( -c $filepath ) ? 'char'
+				            : ( -p $filepath ) ? 'fifo'
+				            : ( -S $filepath ) ? 'socket'
+				            : 'unknown';
+				
+				# === Get file's standard metadata ===
+				my ($dev, $ino, $mode, $nlink, $uid, $gid, $rdev, $size, $atime, $mtime, $ctime, $blksize, $blocks) = stat($filepath);
+				
+				# === Determine if file is a JPEG ===
+				$meta{is_jpeg} = ($object =~ /\.((jpe?g)|thm|jpg_original)$/i);
+				
+				# === Look for attributes used by checksum_tool and friends ===
+				
+				my %xa = ();
+				my @xa_keys = ( 
+				                '_', 
+				                'md5', 
+				                'md5_mtime', 
+				                'md5_size', 
+				                #'jpeg.md5', 
+				                #'meta.original_path' 
+				              );
+				
+				foreach my $key (@xa_keys) {
+					my $value = getfattr( $filepath, $key, { namespace => 'user' } );
+					if ( defined $value ) {
+						$xa{$key} = $value;
+						
+						if ( ( $key eq '_' ) && ( $xa{$key} =~ /^([0-9a-fA-F]{32}):(\d+):(\d+)$/ ) )  {
+							( $meta{'md5'}, $meta{'md5.mtime'}, $meta{'md5.size'} ) = ( $1, $2, $3 );
+						}
+					}
+				}
+				
+				
+				$meta{'md5.valid'} = ( defined $meta{'md5'} ) 
+				                   ? ( $size == $meta{'md5.size'} ) & ( $mtime == $meta{'md5.mtime'} ) ? 'yes' : 'no'
+				                   : undef;
+				
+				# === Get all of file's extended attributes ===
+				my %seen_xa = ();
+				foreach my $ns ( listfattrns($filepath) ) {
+					foreach my $attr ( listfattr( $filepath, { namespace => $ns } ) ) {
+						$seen_xa{"$ns.$attr"} = getfattr($filepath, $attr, { namespace => $ns } );
+					}
+				}
+				
+				# === Get human-readable file permissions ====
+				$meta{mode}  = sprintf("%04o", $mode & 07777);     # Mode bits (4-digit octal)
+				
+				# === Get human readable UID and username ===
+				my $username = getpwuid($uid);
+				$username = ' UNKNOWN ' unless ($username);
+				$meta{user}  = "$uid ($username)";                 # Owner: NUMBER (NAME)
+				
+				# === Get human-readable GID and group name ===
+				my $groupname = getgrgid($gid);
+				$groupname = ' UNKNOWN ' unless ($groupname);
+				$meta{group} = "$gid ($groupname)";                # Group: NUMBER (NAME)
+				
+				# === Object-type-specific attribute handling ===
+				if ($meta{type} eq 'dir') {
+					$meta{mtime} = $mtime;                           # Modification time
+					
+				} elsif ($meta{type} eq 'file') {
+					$meta{size}  = $size;                            # Size (only for files)
+					$meta{mtime} = $mtime;                           # Modification time
+					
+				} elsif ($meta{type} eq 'link') {
+					$meta{target} = readlink($filepath);             # Symlink's target
+					
+				} elsif ( ($meta{type} eq 'block') ||
+				          ($meta{type} eq 'char') ) {
+					$meta{mtime} = $mtime;                           # Modification time
+					my $minor = $rdev % 256;
+					my $major = int( $rdev / 256 );
+					$meta{device} = "$major,$minor";                 # Device major and minor values (MAJOR,MINOR)
+				}
+				
+				$meta{original} = $xa{'user.meta.original_path'};  # Original location (path and filename)
+				
+				#my $do_update = 0;
+				#
+				#if (
+				#     $$_user{'options'}{'have_exiftool'} &&
+				#     ( $$_OPTIONS{compute_missing_checksums} ) &&
+				#     ( $meta{type} eq 'file' ) &&
+				#     ( $meta{is_jpeg} ) &&
+				#     ( ! defined $xa{'user.jpeg.md5'} )
+				#   ) {
+				#	print STDERR "\t$object\tComputing JPEG checksum\n";
+				#	my $md5 = `exiftool "$filepath" -all= -o - -m | md5sum`;
+				#	$md5 =~ s/\s.*$//s;
+				#	$xa{'user.jpeg.md5'} = $md5;
+				#	$do_update = 1;
+				#}
+				#
+				$meta{jpeg_md5} = $xa{'user.jpeg.md5'};            # MD5 checksum of file's JPEG data
+				
+				#if ( 
+				#     ( $meta{type} eq 'file' ) &&
+				#     ( $$_OPTIONS{compute_missing_checksums} ) &&
+				#     ( ! defined $xa{'user.md5'} )
+				#   ) {
+				#	print STDERR "\t$object\tComputing file checksum\n";
+				#	$xa{'user.md5'} = ComputeMD5($filepath);
+				#	#$xa{'user.md5_mtime'} = $stat{mtime};
+				#	#$xa{'user.md5_size'}  = $stat{size};
+				#	$xa{'user.md5_mtime'} = $mtime;
+				#	$xa{'user.md5_size'}  = $size;
+				#	$do_update = 1;
+				#}
+				#
+				#$meta{md5} = $xa{'user.md5'};                      # MD5 checksum of entire file
+				
+				#if ( $do_update ) {
+				#	#print STDERR "	Updating extended attributes\n";
+				#	SetAttributes($filepath, \%xa, \%existing_xa, \@xa_keys)
+				#}
+				
+				# === Display object's metadata ===
+				
+				my $first = 1;
+				my $value;
+				
+				foreach my $key ( qw(path name type mode user group size mtime target device original md5 md5.mtime md5.size md5.source md5.valid jpeg_md5 ) ) {
+					if (defined $meta{$key}) {
+						if ($first) {
+							$first = 0;
+						} else {
+							print "\t";
+						}
+						$value = $meta{$key};
+						
+						print "$key:$value";
+					}
+				}
+				
+				foreach my $key ( sort keys %seen_xa ) {
+					$value = $seen_xa{$key};
+					if (defined $value) {
+						if ($first) {
+							$first = 0;
+						} else {
+							print "\t";
+						}
+						print "xa.$key:$value";
+					}
+				}
+				print "\n";
+				
+			},
+			
+			# *** get_metadata  :  phase-1-per-subdirectory ***
+			'phase-1-per-subdirectory' => undef,
+			
+			# *** get_metadata  :  phase-1-dir-leave ***
+			'phase-1-dir-leave' => undef,
+			
+			# *** get_metadata  :  phase-1-per-tree-post ***
+			'phase-1-per-tree-post' => undef,
+			
+			# *** get_metadata  :  phase-2-pre ***
+			'phase-2-pre' => undef,
+			
+			# *** get_metadata  :  phase-2-dir-enter'   ***
+			'phase-2-dir-enter'    => undef,
+			
+			# *** get_metadata  :  phase-2-per-object ***
+			'phase-2-per-object' => undef,
+			
+			# *** get_metadata  :  phase-2-per-subdirectory ***
+			'phase-2-per-subdirectory' => undef,
+			
+			# *** get_metadata  :  phase-2-dir-leave'   ***
+			'phase-2-dir-leave'    => undef,
+			
+			# *** get_metadata  :  phase-2-post ***
+			'phase-2-post' => undef,
+			
+			# *** get_metadata  :  finalize ***
+			'finalize' => undef,
+			
+		},
+		
+		
+		
+		
+		# ==========================================================================
+		
+		
+		
+		
+		# *** link_dupes ***
+		'link_dupes' => { 
+			'short' => '-S', 
+			'long'  => '--link-dupes', 
+			'alias' => 'link_dupes',
+			'supported-options' => [ 'no-act', 'discard-existing', 'link-relative', 
+			                         'link-absolute', 'move-dupes', 'same-name', 
+			                         'overwrite', 'preserve', 'built-in-copy', 
+			                         'recurse', 'no-recurse', 'one-filesystem' ],
+			'syntax' => [
+				{ 'en' => 'OBJECTS REFERENCE_DIRECTORY [ OPTIONS ]' },
+				{ 'en' => 'DIRECTORY [ OPTIONS ]' }
+			], 
+			'usage' => { 'en' => <<EOF
+-S | --link-dupes          Replace duplicates files with hard links (when 
+                           possible) otherwise replace them with symlinks
+EOF
+			},
+			'usage_long' => { 'en' => <<EOF
+OBJECTS := ( FILE | DIRECTORY ) [ ... ]
+
+Replace any files in OBJECTS that exist in REFERENCE_DIRECTORY with links to 
+the latter.  When called with a single directory then any duplicate files in 
+the directory are linked to one of the copies.
+
+Hard links will be used whenever possible; if this cannot be done (e.g. cross-
+device links) then symbolic links will be used.  When symbolic links are used, 
+relative links are used if the file being pointed by the link to has a relative 
+path and absolute links are used if the file being pointed to has an absolute 
+path.  The the --link-absolute option can be used to force the use of absolute 
+links and --link-relative can be used to force use of relative links.
+
+Checksums will be computed and stored for all files that are missing them.
+
+EOF
+			},
+			
+			# === Configuration options ===
+			
+			'phases' => undef,                 # Required (set to either 1 or 2)
+			                                   # This must be set by the command (either as an 
+			                                   # option on by the initialize callback.
+			'use-checksums' => 1,              # Optional, defaults to true.
+			'skip-if-no_md5sums-present' => 1, # Optional, defaults to true.
+			
+			# *** link_dupes  :  initialize ***
+ALIAS	'initialize' => '{find_dupes}{initialize}',
+			
+			# *** link_dupes  :  phase-1-per-tree-pre ***
+			'phase-1-per-tree-pre' => undef,
+			
+			# *** link_dupes  :  phase-1-dir-enter ***
+			'phase-1-dir-enter' => undef,
+			
+			# *** link_dupes  :  phase-1-per-object ***
+ALIAS	'phase-1-per-object' => '{find_dupes}{phase-1-per-object}',
+			
+			# *** link_dupes  :  phase-1-per-subdirectory ***
+			'phase-1-per-subdirectory' => undef,
+			
+			# *** link_dupes  :  phase-1-dir-leave ***
+			'phase-1-dir-leave' => undef,
+			
+			# *** link_dupes  :  phase-1-per-tree-post ***
+			'phase-1-per-tree-post' => undef,
+			
+			# *** link_dupes  :  phase-2-pre ***
+			'phase-2-pre' => undef,
+			
+			# *** link_dupes  :  phase-2-dir-enter'   ***
+			'phase-2-dir-enter'    => undef,
+			
+			# *** link_dupes  :  phase-2-per-object ***
+ALIAS	'phase-2-per-object' => '{find_dupes}{phase-2-per-object}',
+			
+			# *** link_dupes  :  phase-2-per-subdirectory ***
+			'phase-2-per-subdirectory' => undef,
+			
+			# *** link_dupes  :  phase-2-dir-leave'   ***
+			'phase-2-dir-leave'    => undef,
+			
+			# *** link_dupes  :  phase-2-post ***
+			'phase-2-post' => undef,
+			
+ALIAS	'user-finalize-loop' => '{find_dupes}{user-finalize-loop}',
+			
+			# *** link_dupes  :  finalize ***
+ALIAS	'finalize' => '{symlink_dupes}{finalize}',
+			
+		},
+		
+		
+		
+		
+		# ==========================================================================
+		
+		
+		
+		
+		# *** prune_dirs ***.
+		'prune_dirs' => { 
+			'short' => '-p', 
+			'long'  => '--prune-dirs', 
+			'alias' => 'prune_dirs',
+			'supported-options' => [ 'no-act', 'ignore-symlinks', 'all-or-nothing', 
+			                         'recurse', 'no-recurse', 'one-filesystem' ],
+			'syntax' => [
+				{ 'en' => 'DIRECTORY [ ... ] [ OPTIONS ]' }
+			], 
+			'usage' => { 'en' => <<EOF
+-p | --prune-dirs          Recursively delete empty directories
+EOF
+			},
+			'usage_long' => { 'en' => <<EOF
+Recursively delete empty directories
+
+Directories are considered empty if they contain no files besides .md5sums, 
+.img-md5sums, .atom, .DS_Store, .directory, .folder.png, Thumbs.db, Desktop.ini,
+BBThumbs.dat, or .DS_Store and no non-empty subdirectories besides .xvpics, 
+.pics, or .AppleDouble.  In addition, if the --ignore-symlinks option is given 
+then directories containing only symbolic links and no files (special or 
+otherwise, beyond those mentioned above) are also considered to be empty.
+EOF
+			},
+			'use-checksums' => 0,
+			'phases' => 1, 
+			'skip-if-no_md5sums-present' => 0, 
+			
+			# *** prune_dirs  :  initialize ***
+			'initialize' => sub {
+				my ( $_user, $_OBJECTS, $_OPTIONS ) = @_;
+				
+				# Number of non-ignored files
+				$$_user{'file-count'} = 0;
+				
+			},
+			
+			# *** prune_dirs  :  phase-1-per-tree-pre ***
+			'phase-1-per-tree-pre' => undef,
+			
+			# *** prune_dirs  :  phase-1-dir-enter ***
+			'phase-1-dir-enter' => sub {
+				my ( $_user,  $directory,  $_OPTIONS ) = @_;
+				#print "phase-1-dir-enter( $_user,  $directory,  $_OPTIONS )\n";
+				
+				# Set number of non-ignored files to 0
+				$$_user{'this-file-count'}{$directory} = 0;
+				
+			},
+			
+			# *** prune_dirs  :  phase-1-per-object ***
+			'phase-1-per-object' => sub {
+				my ( $_user, $directory, $object, $_metadata, $_OPTIONS ) = @_;
+				#print "phase-1-per-object( $_user, $directory, $object, $_metadata, $_OPTIONS )\n";
+				
+				# If object is a symlink
+				if ( $$_metadata{'is_link'} ) {
+					#print "LINK: $directory/$object\n";
+					
+					if ( $$_OPTIONS{'ignore-symlinks'} ) {
+						# Don't count anything symlinked as existing
+						#print "SKIP link to $$_metadata{'type'}: $directory/$object\n";
+						return;
+					}
+				}
+				
+				# If applicable, increment non-ignored files count
+				
+				# Object is a regular file
+				if ( $$_metadata{'type'} eq 'file' ) {
+					#print "FOUND file: $directory/$object\n";
+					$$_user{'this-file-count'}{$directory}++;
+					return;
+				
+				}
+				
+				# Other object types are ignored
+				#print "SKIP $$_metadata{'type'}: $directory/$object\n";
+				
+				return;
+			},
+			
+			# *** prune_dirs  :  phase-1-per-subdirectory ***
+			'phase-1-per-subdirectory' => sub {
+				my ( $_user, $directory, $object, $returned, $_metadata, $_OPTIONS ) = @_;
+				
+				# === Delete subdirectory if empty and all-or-nothing isn't active ===
+				if ($returned == 0) {
+					# Directory is empty
+					unless ( $$_OPTIONS{'all-or-nothing'} ) {
+						print Localize( { 'en' => "Recursively deleting " } ) . File::Spec->catfile( $directory, $object ) . "\n";
+						RecursivelyDelete("$directory/$object", $_OPTIONS);
+					}
+				}
+				
+				# Add number of non-ignored files in subdirectory to total non-ignored files count
+				$$_user{'this-file-count'}{$directory} += $returned;
+				
+			},
+			
+			# *** prune_dirs  :  phase-1-dir-leave ***
+			'phase-1-dir-leave' => sub {
+				my ( $_user, $directory, $_OPTIONS ) = @_;
+				
+				# Get number of non-deleted files
+				my $return = $$_user{'this-file-count'}{$directory};
+				
+				#print "Leaving $directory : $return files found\n";
+				
+				# Remove hash entry
+				delete $$_user{'this-file-count'}{$directory};
+				
+				# Return number of non-deleted files
+				return $return;
+			},
+			
+			# *** prune_dirs  :  phase-1-per-tree-post ***
+			'phase-1-per-tree-post' => sub {
+				my ( $_user, $object, $returned, $_OPTIONS ) = @_;
+				#print "Completed scan of $object : $returned files found\n";
+				
+				# === Delete object if empty ===
+				if ($returned == 0) {
+					# Directory is empty
+					print "Recursively deleting '$object'\n";
+					RecursivelyDelete($object, $_OPTIONS);
+				}
+			},
+			
+			# *** prune_dirs  :  phase-2-pre ***
+			'phase-2-pre' => undef,
+			
+			# *** prune_dirs  :  phase-2-dir-enter'   ***
+			'phase-2-dir-enter'    => undef,
+			
+			# *** prune_dirs  :  phase-2-per-object ***
+			'phase-2-per-object' => undef,
+			
+			# *** prune_dirs  :  phase-2-per-subdirectory ***
+			'phase-2-per-subdirectory' => undef,
+			
+			# *** prune_dirs  :  phase-2-dir-leave'   ***
+			'phase-2-dir-leave'    => undef,
+			
+			# *** prune_dirs  :  phase-2-post ***
+			'phase-2-post' => undef,
+			
+			# *** prune_dirs  :  finalize ***
+			'finalize' => undef,
+		},
+		
+		
+		
+		
+		# ==========================================================================
+		
+		
+		
+		
+		# *** restore ***
+		'restore' => { 
+			'short' => '-U', 
+			'long'  => '--restore', 
+			'alias' => 'restore_to_xa_location',
+			'supported-options' => [ 'no-act', 'overwrite', 'preserve', 
+			                         'built-in-copy', 
+			                         'recurse', 'no-recurse', 'one-filesystem' ],
+			'syntax' => [
+				{ 'en' => '( FILE | DIRECTORY ) [ ... ] [ OPTIONS ]' }
+			], 
+			'usage' => { 'en' => <<EOF
+-U | --restore             Restore moved files to their original locations
+EOF
+			},
+			'usage_long' => { 'en' => <<EOF
+Move files back to the their original locations (as stored in each file's 
+user.meta.original_path attribute).
+
+By default, existing symlinks will be overwritten but not files.  To always 
+allow overwriting use the --overwrite (-O) option; to never allow overwriting 
+use the --preserve (-P) option.  In any case, attempting to overwrite a 
+directory or special file will display a (non-fatal) warning to STDERR and the 
+source file will not be moved.  The same applies when --preserve is active.
+
+No action will be taken on a file being restored if it is not a regular file or 
+has no user.meta.original_path attribute.
+
+Missing directories will be recreated but their ownership, permissions, and 
+extended attributes will not be restored.
+
+This command requires filesystem support for user-defined extended attributes.
+Currently, .md5sums files are not updated.
+EOF
+			},
+			
+			# === Configuration options ===
+			
+			'phases' => 1,                     # Required (set to either 1 or 2)
+			                                   # This must be set by the command (either as an 
+			                                   # option on by the initialize callback.
+			'use-checksums' => 0,              # Optional, defaults to true.
+			'skip-if-no_md5sums-present' => 0, # Optional, defaults to true.
+			
+			# === Dummy callback stubs ===
+			
+			# *** phase-1-per-object ***
+			'phase-1-per-object' => sub {
+				my ( $_user, $directory, $object, $_metadata, $_OPTIONS ) = @_;
+				#print "phase-1-per-object( $_user, $directory, $object, $_metadata, $_OPTIONS )\n";
+				
+				my $path = File::Spec->catfile($directory, $object);
+				my $original_path = getfattr( $path, 'meta.original_path', { namespace => 'user' } );
+				
+				unless ( defined $original_path ) {
+					print STDERR Localize( $STRINGS{'WARNING'} ) . " " . 
+					             $path . ' ' . Localize( { 'en' => "has no meta.original_path attribute, skipping" } ) .
+					             "\n";
+					return;
+				}
+				
+				print Localize( { 'en' => "Restoring" } ) . ' ' . 
+				      $original_path . ' -> ' . $original_path . "\n";
+				
+				# Default:     Delete symlinks, do not delete anything else
+				# --preserve:  Do not delete anything (not even symlinks)
+				# --overwrite: Delete symlinks and files
+				# In all cases objects that are not files or symlinks are never deleted
+				
+				if ( -e $original_path ) {
+					# === Original path exists ===
+					
+					if ( -l $original_path ) {
+						# === Original path is a symlink ===
+						
+						if (
+						     ( exists $$_OPTIONS{'OVERWRITE'} ) &&
+						     ( $$_OPTIONS{'OVERWRITE'} == 0 )
+						   ) {
+							# === --preserve option active ===
+							print STDERR Localize( $STRINGS{'WARNING'} ) . " " . 
+							             Localize( { 'en' => "Not unlinking symlink" } ) .
+							             " $original_path\n\n";
+							return;
+							
+						} else {
+							# === Default case, remove the symlink ===
+							
+							# Unlink original
+							# The unlink is always done (--preserve, if present, is ignored)
+							UnlinkAlways($original_path, $_user, $_OPTIONS, $_STRINGS);
+						}
+						
+					} elsif ( -f $original_path ) {
+						# === Original path is a file ===
+						
+						if (
+						     ( exists $$_OPTIONS{'OVERWRITE'} ) &&
+						     ( $$_OPTIONS{'OVERWRITE'} == 1 )
+						   ) {
+							# === --overwrite option active, delete the file ===
+							
+							# Unlink original
+							# The unlink is always done (--preserve, if present, is ignored)
+							UnlinkAlways($original_path, $_user, $_OPTIONS, $_STRINGS);
+							
+						} else {
+							# === Default case, don't delete file ===
+							print STDERR Localize( $STRINGS{'WARNING'} ) . " " . 
+							             Localize( { 'en' => "Not unlinking file" } ) .
+							             " $original_path\n\n";
+							return;
+						}
+						
+						
+					} else {
+						# === Default case, don't delete file ===
+						print "An object exists at original location and is not a symlink or file, skipping.\n\n";
+						print STDERR Localize( $STRINGS{'WARNING'} ) . " " . 
+						             Localize( { 'en' => "An object exists at original location and is not a symlink or file, skipping." } ) .
+						             "\n\n";
+						return;
+					}
+				}
+				
+				my $src = $path;
+				my $dst = $original_path;
+				
+				my ($dst_vol, $dst_dir, $dst_file)  = File::Spec->splitpath($dst);
+				MkdirHier( $dst_dir, $_user, $_OPTIONS, $_STRINGS );
+				
+				# Determine which physical devices the source and destination are on
+				my $src_dev = GetPathDevice($src);
+				my $dst_dev = GetPathDevice($dst);
+				
+				# Unlink any existing file at destination
+				Unlink($dst, $_user, $_OPTIONS, $_STRINGS);
+				
+				if ( $src_dev != $dst_dev ) {
+					# Cross-device move
+					# Use commandline copy followed by deletion of original
+					
+					# Copy using system's cp command
+					SystemCopy( $src, $dst, $_user, $_OPTIONS, $_STRINGS);
+					
+					# Unlink original
+					# The unlink is always done (--preserve, if present, is ignored)
+					UnlinkAlways($src, $_user, $_OPTIONS, $_STRINGS);
+					
+					
+				} else {
+					# Same-device move
+					
+					# Simple rename using Perl
+					
+					if ($$_OPTIONS{'no-act'}) {
+						$$_user{'FAKE_FILESYSTEM'}{$dst} = $$_user{'FAKE_FILESYSTEM'}{$src}; # Fake copy
+						$$_user{'FAKE_FILESYSTEM'}{$src} = ''; # Fake delete
+					} else {
+						unless ( rename $src, $dst ) {
+							print STDERR Localize( $$_STRINGS{'ERROR'} ) . " $?, $!\n";
+							exit;
+						}
+					}
+					
+				}
+				
+				print Localize( { 'en' => "Clearing meta.original_path attribute from" } ) . ' ' . $original_path . "\n";
+				unless ( $$_OPTIONS{'no-act'} ) {
+					delfattr( $original_path, 'meta.original_path', { namespace => 'user' } );
+				}
+				
+				print "\n";
+			},
+			
+		},
+		
+		
+		
+		
+		# ==========================================================================
+		
+		
+		
+		
+		# *** symlink_dupes ***
+		'symlink_dupes' => { 
+			'short' => '-s', 
+			'long'  => '--symlink-dupes', 
+			'alias' => 'symlink_dupes',
+			'supported-options' => [ 'no-act', 'discard-existing', 'link-relative', 
+			                         'link-absolute', 'move-dupes', 'same-name', 
+			                         'overwrite', 'preserve', 'built-in-copy', 
+			                         'recurse', 'no-recurse', 'one-filesystem' ],
+			'syntax' => [
+				{ 'en' => 'OBJECTS REFERENCE_DIRECTORY [ OPTIONS ]' },
+				{ 'en' => 'DIRECTORY [ OPTIONS ]' }
+			], 
+			'usage' => { 'en' => <<EOF
+-s | --symlink-dupes       Replace duplicates files with symlinks
+EOF
+			},
+			'usage_long' => { 'en' => <<EOF
+OBJECTS := ( FILE | DIRECTORY ) [ ... ]
+
+Replace any files in OBJECTS that exist in REFERENCE_DIRECTORY with symbolic 
+links to the latter.  When called with a single directory then any duplicate 
+files in the directory are symbolically linked to one of the copies.
+
+Relative links are used if the file being pointed by the link to has a relative 
+path and absolute links are used if the file being pointed to has an absolute 
+path.  The --link-absolute option can be used to force the use of absolute 
+links for all links and --link-relative can be used to force use of relative 
+links for all links.
+
+Checksums will be computed and stored for all files that are missing them.
+
+EOF
+			},
+			
+			# === Configuration options ===
+			
+			'phases' => undef,                 # Required (set to either 1 or 2)
+			                                   # This must be set by the command (either as an 
+			                                   # option on by the initialize callback.
+			'use-checksums' => 1,              # Optional, defaults to true.
+			'skip-if-no_md5sums-present' => 1, # Optional, defaults to true.
+			
+			# *** symlink_dupes  :  initialize ***
+ALIAS	'initialize' => '{find_dupes}{initialize}',
+			
+			# *** symlink_dupes  :  phase-1-per-tree-pre ***
+			'phase-1-per-tree-pre' => undef,
+			
+			# *** symlink_dupes  :  phase-1-dir-enter ***
+			'phase-1-dir-enter' => undef,
+			
+			# *** symlink_dupes  :  phase-1-per-object ***
+ALIAS	'phase-1-per-object' => '{find_dupes}{phase-1-per-object}',
+			
+			# *** symlink_dupes  :  phase-1-per-subdirectory ***
+			'phase-1-per-subdirectory' => undef,
+			
+			# *** symlink_dupes  :  phase-1-dir-leave ***
+			'phase-1-dir-leave' => undef,
+			
+			# *** symlink_dupes  :  phase-1-per-tree-post ***
+			'phase-1-per-tree-post' => undef,
+			
+			# *** symlink_dupes  :  phase-2-pre ***
+			'phase-2-pre' => undef,
+			
+			# *** symlink_dupes  :  phase-2-dir-enter'   ***
+			'phase-2-dir-enter'    => undef,
+			
+			# *** symlink_dupes  :  phase-2-per-object ***
+ALIAS	'phase-2-per-object' => '{find_dupes}{phase-2-per-object}',
+			
+			# *** symlink_dupes  :  phase-2-per-subdirectory ***
+			'phase-2-per-subdirectory' => undef,
+			
+			# *** symlink_dupes  :  phase-2-dir-leave'   ***
+			'phase-2-dir-leave'    => undef,
+			
+			# *** symlink_dupes  :  phase-2-post ***
+			'phase-2-post' => undef,
+			
+			# *** symlink_dupes  :  user-finalize-loop ***
+			
+ALIAS	'user-finalize-loop' => '{find_dupes}{user-finalize-loop}',
+			
+			# *** symlink_dupes  :  finalize ***
+			# === This code is also called as link_dupes : finalize ===
+			
+			'finalize' => sub {
+				my ( $_user, $_OPTIONS ) = @_;
+				
+				# src or dst absolute -> absolute
+				# otherwise relative
+				# can be overrideen with commandline options
+				
+				#print Dumper( $_user );
+				
+				#print Dumper( $_OPTIONS );
+				
+				my $dupe = Localize( $$_STRINGS{'DUPE'} );
+				my $keep = Localize( $$_STRINGS{'keep'} );
+				
+				# === Only consider using hard links if called as link_dupes ===
+				$$_user{'maybe_hard_link'} = ( $$_OPTIONS{'COMMAND'} eq 'link_dupes' ) ? 1 : 0;
+				
+				# === Show duplicates ===
+				
+				my $dupe_callback = sub {
+					my ( $md5, $display_md5, $file, $_user, $_OPTIONS ) = @_;
+					if ( $$_OPTIONS{'long-names'} ) {
+						printf("%-49s %s\t%s\t%s\t%s\n", $md5, $dupe, $file->{'escaped_name'}, $file->{'escaped_directory'}, $file->{escaped_full_path});
+					} else {
+						printf("%-49s %s\t%s\t%s\n",     $md5, $dupe, $file->{'escaped_name'}, $file->{'escaped_directory'});
+					}
+				};
+				
+				my $keep_callback = sub {
+					my ( $md5, $display_md5, $file, $_user, $_OPTIONS ) = @_;
+					#print Dumper( $_user );
+					if ( $$_OPTIONS{'long-names'} ) {
+						printf("%-49s %s\t%s\t%s\t%s\n", $md5, $keep, $file->{'escaped_name'}, $file->{'escaped_directory'}, $file->{escaped_full_path});
+					} else {
+						printf("%-49s %s\t%s\t%s\n",     $md5, $keep, $file->{'escaped_name'}, $file->{'escaped_directory'});
+					}
+					
+					# === Record canonical file for checksum ===
+					if ( $$_OPTIONS{'same-name'}) {
+						$$_user{'canonical'}{"$$file{metadata}{md5}:$$file{metadata}{size}:".lc($$file{metadata}{name})} = $file;
+					} else {
+						$$_user{'canonical'}{"$$file{metadata}{md5}:$$file{metadata}{size}"} = $file;
+					}
+				};
+				
+				&{ $$_OPTIONS{'_COMMAND'}{'user-finalize-loop'} }( $_user, $dupe_callback, $keep_callback, $_OPTIONS );
+				
+				
+				
+				
+				print "\n";
+				
+				
+				
+				
+				# === Replace duplicates with links ===
+				
+				# === START - dupe_callback ===
+				my $dupe_callback = sub {
+					my ( $md5, $display_md5, $file, $_user, $_OPTIONS ) = @_;
+					
+					my $fullpath = File::Spec->catfile( $file->{'directory'}, $file->{'name'} );
+					
+					my $link_to;
+					
+					# Determine whether a hard or soft link should be used
+					
+					my $do_hard_link;
+					
+					if ( $$_user{'maybe_hard_link'} ) {
+						
+						my ($file_device)    = stat( $$file{'directory'} );
+						my ($link_to_device) = stat( $$_user{'canonical'}{$md5}{'directory'} );
+						
+						if ( $file_device == $link_to_device ) {
+							$do_hard_link = 1;
+						}
+					}
+					
+					# === Determine path to link to ===
+					
+					if ( $do_hard_link ) {
+						$link_to = File::Spec->catfile( $$_user{'canonical'}{$md5}{'directory'}, $$_user{'canonical'}{$md5}{'name'} );
+						
+					} elsif ( $$_OPTIONS{'link-absolute'} ) {
+						# === Absolute link (forced) ===
+						$link_to = File::Spec->rel2abs( File::Spec->catfile( $$_user{'canonical'}{$md5}{'directory'}, $$_user{'canonical'}{$md5}{'name'} ) );
+						
+					} elsif ( $$_OPTIONS{'link-relative'} ) {
+						# === Relative link (forced) ===
+						$link_to = File::Spec->abs2rel( Cwd::abs_path( File::Spec->catfile( $$_user{'canonical'}{$md5}{'directory'}, $$_user{'canonical'}{$md5}{'name'} ) ), 
+						                                Cwd::abs_path( $$file{'directory'} ) );
+						
+					} elsif ( File::Spec->file_name_is_absolute( $$_user{'canonical'}{$md5}{'directory'} ) ) {
+						# === Absolute link ===
+						$link_to = File::Spec->catfile( $$_user{'canonical'}{$md5}{'directory'}, $$_user{'canonical'}{$md5}{'name'} );
+						
+					} else {
+						# === Relative link ===
+						$link_to = File::Spec->abs2rel( Cwd::abs_path( File::Spec->catfile( $$_user{'canonical'}{$md5}{'directory'}, $$_user{'canonical'}{$md5}{'name'} ) ), 
+						                                Cwd::abs_path( $$file{'directory'} ) );
+					}
+					
+					# === Unlink or move existing file ===
+					
+					if ( defined $$_OPTIONS{'move-dupes'} ) {
+						my $move_to = File::Spec->catdir( $$_OPTIONS{'move-dupes'}, $fullpath );
+						
+						MoveFile( $fullpath, $move_to, $_user, $_OPTIONS );
+						
+						# Record original location in file's user.meta.original_path attribute
+						my $original_path = Cwd::abs_path(
+						                                   ( File::Spec->file_name_is_absolute( $fullpath ) ) 
+						                                   ? $fullpath
+						                                   : File::Spec->rel2abs( $fullpath )
+						                                 );
+						unless ( $$_OPTIONS{'no-act'} ) {
+							setfattr( $move_to, 'meta.original_path', $original_path, { namespace => 'user' } );
+						}
+						
+						
+					} else {
+						print Localize( $STRINGS{'UNLINK'} )  . " $fullpath\n";
+						unless ($$_OPTIONS{'no-act'}) {
+							print "$?, $!\n" unless (unlink "$fullpath");
+						}
+					}
+					
+					# === Link to canonical file ===
+					
+					if ( $do_hard_link ) {
+						print Localize( $STRINGS{'LINK'} ) . " $fullpath -> $link_to\n";
+						unless ($$_OPTIONS{'no-act'}) {
+							print "$?, $!\n" unless (link $link_to, $fullpath);
+						}
+					} else {
+						print Localize( $STRINGS{'SYMLINK'} ) . " $fullpath -> $link_to\n";
+						unless ($$_OPTIONS{'no-act'}) {
+							print "$?, $!\n" unless (symlink $link_to, $fullpath);
+						}
+					}
+					
+					print "\n";
+					
+				}; # === END - dupe_callback ===
+				
+				my $keep_callback = sub { };
+				
+				if ($$_OPTIONS{'no-act'}) {
+					print Localize( $STRINGS{'NOTE'} ) . " " . 
+					      Localize( $STRINGS{'no-act-active'} ) . "\n";
+					print "\n";
+				}
+				
+				&{ $$_OPTIONS{'_COMMAND'}{'user-finalize-loop'} }( $_user, $dupe_callback, $keep_callback, $_OPTIONS );
+			},
+			
+		},
+		
+		
+		
+		
+		# ==========================================================================
+		
+		
+		
+		
+		# *** update_checksums ***
+		'update_checksums' => { 
+			'short' => '-u', 
+			'long'  => '--update-checksums', 
+			'alias' => 'update_checksums',
+			'supported-options' => [ 'discard-existing', 
+			                         'recurse', 'no-recurse', 'one-filesystem' ],
+			'syntax' => [
+				{ 'en' => '( FILE | DIRECTORY ) [ ... ] [ OPTIONS ]' }
+			], 
+			'usage' => { 'en' => <<EOF
+-u | --update-checksums    Update checksums for modified files and for files 
+EOF
+			},
+			'usage_long' => { 'en' => <<EOF
+Update file checksums
+
+Updates the file checksums for all specified files and directories.  If a file 
+does not appear to have been modified (same size and last-modified date) then 
+the checksum will not be recomputed.  To recompute checksums for all files (not 
+just those that appear to have changed) use the --discard-existing (-d) option.
+EOF
+			},
+			'use-checksums' => 1,
+			'phases' => 1, 
+			'skip-if-no_md5sums-present' => 1, 
+			
+			# *** update_checksums  :  initialize ***
+			'initialize' => sub {
+				my ( $_user, $_OBJECTS, $_OPTIONS ) = @_;
+				
+				$$_OPTIONS{'compute-missing'} = 1 unless defined ($$_OPTIONS{'compute-missing'});
+			},
+			
+			# *** update_checksums  :  phase-1-per-tree-pre ***
+			'phase-1-per-tree-pre' => undef,
+			
+			# *** update_checksums  :  phase-1-dir-enter ***
+			'phase-1-dir-enter' => undef,
+			
+			# *** update_checksums  :  phase-1-per-object ***
+			'phase-1-per-object' => undef,
+			
+			# *** update_checksums  :  phase-1-per-subdirectory ***
+			'phase-1-per-subdirectory' => undef,
+			
+			# *** update_checksums  :  phase-1-dir-leave ***
+			'phase-1-dir-leave' => undef,
+			
+			# *** update_checksums  :  phase-1-per-tree-post ***
+			'phase-1-per-tree-post' => undef,
+			
+			# *** update_checksums  :  phase-2-pre ***
+			'phase-2-pre' => undef,
+			
+			# *** update_checksums  :  phase-2-dir-enter'   ***
+			'phase-2-dir-enter'    => undef,
+			
+			# *** update_checksums  :  phase-2-per-object ***
+			'phase-2-per-object' => undef,
+			
+			# *** update_checksums  :  phase-2-per-subdirectory ***
+			'phase-2-per-subdirectory' => undef,
+			
+			# *** update_checksums  :  phase-2-dir-leave'   ***
+			'phase-2-dir-leave'    => undef,
+			
+			# *** update_checksums  :  phase-2-post ***
+			'phase-2-post' => undef,
+			
+			# *** update_checksums  :  finalize ***
+			'finalize' => undef,
+		},
+		
+		
+		
+		
+		# ==========================================================================
+		
+		
+		
+		
+		# *** verify_checksums ***
+		'verify_checksums' => { 
+			'short' => '-V', 
+			'long'  => '--verify', 
+			'alias' => 'verify_checksums',
+			'supported-options' => [ 'same-name', 
+			                         'recurse', 'no-recurse', 'one-filesystem' ],
+			'syntax' => [
+				{ 'en' => '( FILE | DIRECTORY ) [ ... ] [ OPTIONS ]' }
+			], 
+			'usage' => { 'en' => <<EOF
+-V | --verify              Verify that files match their checksums
+EOF
+			},
+			'usage_long' => { 'en' => <<EOF
+Verify that files match their checksums.
+
+This can be used to verify file integrity when copying files to a new device.
+For example:
+
+    update_checksums --discard-existing SRC   # recompute checksums
+    cp -a SRC DST                             # copy the files
+    verify_checksums DST                      # verify the copy
+    find_orphans SRC DST                      # show files that weren't copied
+
+If no files have changed then `NO CHANGES` is output.  If files have changed 
+then they are listed along with the nature of the change.  For example, if the 
+checksum, modification time, and size of a file named "filename" in a directory 
+named "directory" have changed then the following will be output:
+
+CHANGED\tdirectory/filename\tMD5 changed, mtime changed, size changed
+
+This command always recomputes the MD5 checksums but never writes them.
+EOF
+			},
+			'use-checksums' => 1,
+			'phases' => 1, 
+			'skip-if-no_md5sums-present' => 1, 
+			
+			# *** verify_checksums  :  initialize ***
+			'initialize' => sub {
+				my ( $_user, $_OBJECTS, $_OPTIONS ) = @_;
+				
+				$$_OPTIONS{'compute-missing'} = 1;
+				$$_OPTIONS{'discard-existing'} = 1;
+				$$_OPTIONS{'never-rewrite-checksums'} = 1;
+				
+				$$_user{'change_count'} = 0;
+				
+				$$_user{'strings'}{'CHANGED'}         = Localize( { 'en' => "CHANGED" } );
+				$$_user{'strings'}{'md5-was-blank'}   = Localize( { 'en' => "MD5 was blank" } );
+				$$_user{'strings'}{'md5-changed'}     = Localize( { 'en' => "MD5 changed" } );
+				$$_user{'strings'}{'mtime-was-blank'} = Localize( { 'en' => "mtime was blank" } );
+				$$_user{'strings'}{'mtime-changed'}   = Localize( { 'en' => "mtime changed" } );
+				$$_user{'strings'}{'size-was-blank'}  = Localize( { 'en' => "size was blank" } );
+				$$_user{'strings'}{'size-changed'}    = Localize( { 'en' => "size changed" } );
+			},
+			
+			# *** verify_checksums  :  phase-1-per-tree-pre ***
+			'phase-1-per-tree-pre' => undef,
+			
+			# *** verify_checksums  :  phase-1-dir-enter ***
+			'phase-1-dir-enter' => undef,
+			
+			# *** verify_checksums  :  phase-1-per-object ***
+			'phase-1-per-object' => sub {
+				my ( $_user, $directory, $object, $_metadata, $_OPTIONS ) = @_;
+				#print "phase-1-per-object( $_user, $directory, $object, $_metadata, $_OPTIONS )\n";
+				
+				use constant MD5_changed     => 1;
+				use constant MD5_was_blank   => 2;
+				use constant mtime_changed   => 4;
+				use constant mtime_was_blank => 8;
+				use constant size_changed    => 16;
+				use constant size_was_blank  => 32;
+				
+				my $changes_seen = 0;
+				
+				if ( ( ! defined $$_metadata{'old_md5'} ) && ( defined $$_metadata{'md5'} ) ) {
+					$changes_seen |= MD5_was_blank;
+				} elsif ( $$_metadata{'md5'} ne $$_metadata{'old_md5'} ) {
+					$changes_seen |= MD5_changed;
+				}
+				
+				if ( ( ! defined $$_metadata{'old_md5_mtime'} ) && ( defined $$_metadata{'md5_mtime'} ) ) {
+					$changes_seen |= mtime_was_blank;
+				} elsif ( $$_metadata{'md5_mtime'} ne $$_metadata{'old_md5_mtime'} ) {
+					$changes_seen |= mtime_changed;
+				}
+				
+				if ( ( ! defined $$_metadata{'old_md5_size'} ) && ( defined $$_metadata{'md5_size'} ) ) {
+					$changes_seen |= size_was_blank;
+				} elsif ( $$_metadata{'md5_size'} ne $$_metadata{'old_md5_size'} ) {
+					$changes_seen |= size_changed;
+				}
+				
+				if ( $changes_seen ) {
+					#print Dumper( $_metadata );
+					
+					my @changes = ();
+					
+					if ( $changes_seen & MD5_was_blank )    { push @changes, $$_user{'strings'}{'md5-was-blank'}; }
+					elsif ( $changes_seen & MD5_changed )   { push @changes, $$_user{'strings'}{'md5-changed'}; }
+					
+					if ( $changes_seen & mtime_was_blank )  { push @changes, $$_user{'strings'}{'mtime-was-blank'}; }
+					elsif ( $changes_seen & mtime_changed ) { push @changes, $$_user{'strings'}{'mtime-changed'}; }
+					
+					if ( $changes_seen & size_was_blank )   { push @changes, $$_user{'strings'}{'size-was-blank'}; }
+					elsif ( $changes_seen & size_changed )  { push @changes, $$_user{'strings'}{'size-changed'}; }
+					
+					print 
+					      $$_user{strings}{CHANGED} .
+					      "\t" . 
+					      File::Spec->catfile( $directory, $object ) . 
+					      "\t" . 
+					      join( ', ', @changes ) . 
+					      "\n";
+					
+					$$_user{'change_count'}++;
+				}
+				
+				return;
+			},
+			
+			
+			# *** verify_checksums  :  phase-1-per-subdirectory ***
+			'phase-1-per-subdirectory' => undef,
+			
+			# *** verify_checksums  :  phase-1-dir-leave ***
+			'phase-1-dir-leave' => undef,
+			
+			# *** verify_checksums  :  phase-1-per-tree-post ***
+			'phase-1-per-tree-post' => undef,
+			
+			# *** verify_checksums  :  phase-2-pre ***
+			'phase-2-pre' => undef,
+			
+			# *** verify_checksums  :  phase-2-dir-enter'   ***
+			'phase-2-dir-enter'    => undef,
+			
+			# *** verify_checksums  :  phase-2-per-object ***
+			'phase-2-per-object' => undef,
+			
+			# *** verify_checksums  :  phase-2-per-subdirectory ***
+			'phase-2-per-subdirectory' => undef,
+			
+			# *** verify_checksums  :  phase-2-dir-leave'   ***
+			'phase-2-dir-leave'    => undef,
+			
+			# *** verify_checksums  :  phase-2-post ***
+			'phase-2-post' => undef,
+			
+			# *** verify_checksums  :  finalize ***
+			'finalize' => sub {
+				my ( $_user, $_OPTIONS ) = @_;
+				
+				unless ( $$_user{'change_count'}) {
+					print Localize( { 'en' => "NO CHANGES" } ) . "\n";
+				}
+			},
+		},
+		
+		
+	);
+	
+	COOK(%$_COMMANDS);
+}
+
+
+
+
+
+
+# ==============================================================================
+# ===  Option definitions                                                   ====
+# ==============================================================================
+
+
+# Each option has the following structure:
+# 
+#   OPTION_NAME => { 
+#      
+#     'short' => STRING, 
+#       # Optional, defaults to undef
+#       # Short option name
+#      
+#     'long' => STRING, 
+#       # Required
+#       # Long option name
+#     
+#     'core-option' => BOOLEAN
+#       # Optional, defaults to undef
+#       # If true option is always available
+#     
+#     'takes-arg' => BOOLEAN,
+#       # Optional, defaults to undef
+#       # Whether the option requires an additional parameter
+#       # 
+#       # If false then the option takes no additional parameter.
+#       # If true then the option requires an additional parameter.
+#       # On the commandline this can be in any of these formats:
+#       # 
+#       #     --option=parameter
+#       #     --option parameter
+#       #     -o=parameter
+#       #     -o parameter
+#     
+#    'set-key'        => STRING,
+#       # Optional, defaults to undef
+#       # Use this name as the key in the options hash (instead of using 
+#       # OPTION_NAME).
+#     
+#    'set-value'      => VALUE, 
+#       # Optional, defaults to undef
+#       # Use this name as the value in the options hash (instead of using the 
+#       # integer 1 (true).  This is ignored for options that take parameter.
+#     
+#     'set-additional' => ARRAY,
+#       # Optional, defaults to undef
+#       # Additional option to set if the option is present
+#       #
+#       # If present, this contains the key, value pair to set.
+#       
+#     'error-check' => SUBROUTINE,
+#       # Optional, defaults to undef
+#       # Validate the current commandline argument
+#       #
+#       # This can, e.g., make sure there are no conflicting options, check 
+#       # validity of additional arguments, etc.
+#       # 
+#       # Called once for each option found on the commandline.
+#       # Note that these callbacks may occur in any order (the commandline 
+#       # option ordering is ignored).
+#       #
+#       # Arguments:
+#       # $COMMAND    -> Name of the current command
+#       #                This is its key in the global command hash.
+#       # $OPTION     -> Name of the current option
+#       #                This is its key in the _options hash.
+#       # $_options   -> Hash with parsed commandline arguments
+#       # $_targets   -> Array with parsed commandline target objects
+#       #
+#       # Return undef if no exceptions were found.  If anything exceptional 
+#       # was found, return an array reference containing of EXCEPTION_TYPE, 
+#       # LOCALIZED_STRING pairs listing the exceptions.  EXCEPTION_TYPE is 
+#       # a STRING: "ERROR" for fatal errors, "WARNING" for non-fatal errors, 
+#       # or "NOTE" for informational messages.
+#       
+#     'usage' => LOCALIZED_STRING
+#       # Required
+#       # Brief, human-readable description of the option.
+#       # directly from checksum_tool.  Option names should match short and 
+#       # long, above, but the actual description should be localized.
+#     
+#   }
+# 
+# 
+# OPTION_NAME is the key (i.e. name) used internally to refer to the option.
+# This must be 7-bit ASCII and may only contain lowercase letters, numbers, 
+# underscores, or dashes.
+# 
+# Each STRING is a non-localized string which should:
+#   1) Use only 7-bit ASCII characters that are valid in Unix filenames
+#   2) Be written in English
+# 
+# Each LOCALIZED_STRING is a hash suitable for passing to Localize(...)
+# 
+# String line lengths should be at most 80 UTF-8 characters.
+# 
+# Each BOOLEAN is false if empty, zero, or undef, true otherwise.
+# 
+# Each ARRAY is an array reference.
+#
+# Each VALUE is an arbitrary Perl value (string, integer, reference, etc.).
+# 
+# Each SUBROUTINE is a reference to a subroutine to be called at a particular 
+# point during the scan.  This can either be an anonymous subroutine (e.g. 
+# "sub { ... }") or a reference to a named function (e.g. "\&subroutine_name").
+# If set to undef then no action will be taken.
+#
+sub GetAvailableOptions($$) {
+	my ($_AVAILABLE_OPTIONS, $_STRINGS) = @_;
+	
+	# The 'usage' strings and those returned by error-check routines are passed 
+	# through Localize(...) before they are displayed; all other strings are 
+	# displayed as-is.
+	
+	%$_AVAILABLE_OPTIONS = 	(
+		# === no-act ===
+		'no-act' => { 
+			'short'          => '-A', 
+			'long'           => '--no-act', 
+			'core-option'    => 1,
+			'default'        => 0,
+			'takes-arg'      => 0,
+			'set-additional' => undef,
+			'error-check'    => sub {
+				my ($COMMAND, $OPTION, $_options, $_targets) = @_;
+				if ( $$_options{'no-act'} ) {
+					return [ 'NOTE', { 'en' => 'Running in no-act mode; no files will be moved or deleted (checksum metadata may be updated).' } ];
+				}
+				return undef;
+			},
+			'usage'          => { 'en' => <<EOF
+-A | --no-act              Do not delete or move any files (.md5sums and 
+                           extended attribute metadata may be updated)
+EOF
+			}
+		},
+		
+		# === all-or-nothing ===
+		'all-or-nothing' => { 
+			'short'          => '-a', 
+			'long'           => '--all-or-nothing', 
+			'core-option'    => 0,
+			'default'        => 0,
+			'takes-arg'      => 0,
+			'set-additional' => undef,
+			'error-check'    => undef,
+			'usage'          => { 'en' => <<EOF
+-a | --all-or-nothing      Only act if the entire object would be affected.
+                           For example, running prune_dirs on an object with 
+                           this option active will only perform deletions if 
+                           the entire object would be deleted.
+EOF
+			}
+		},
+		
+		# === built-in-copy ===
+		'built-in-copy' => { 
+			'short'          => '-b', 
+			'long'           => '--built-in-copy', 
+			'core-option'    => 1,
+			'default'        => 0,
+			'takes-arg'      => 0,
+			'set-additional' => undef,
+			'error-check'    => sub {
+				my ($COMMAND, $OPTION, $_options, $_targets) = @_;
+				if ( $$_options{'built-in-copy'} ) {
+					return [ 'WARNING', { 'en' => 'The built-in-copy option is not currently implemented.' } ];
+				}
+				return undef;
+			},
+			'usage'          => { 'en' => <<EOF
+-b | --built-in-copy       Use a built-in function to copy files (instead of 
+                           using e.g. "cp -ap"); this is also used when copying 
+                           files or moving files across devices.
+                           (not currently implemented)
+EOF
+			}
+		},
+		
+		# === compute-missing ===
+		'compute-missing' => { 
+			'short'          => '-c', 
+			'long'           => '--compute-missing', 
+			'core-option'    => 1,
+			'default'        => undef,
+			'takes-arg'      => 0,
+			'set-key'        => 'compute-missing',
+			'set-value'      => 1,
+			'error-check'    => undef,
+			'usage'          => { 'en' => <<EOF
+-c | --compute-missing     Compute and store MD5 checksums when not present
+                           (default)
+EOF
+			}
+		},
+		
+		# === compute-missing ===
+		'no-compute-missing' => { 
+			'short'          => undef, 
+			'long'           => '--no-compute-missing', 
+			'core-option'    => 1,
+			'default'        => undef, # defined under compute-missing, above
+			'takes-arg'      => 0,
+			'set-key'        => 'compute-missing',
+			'set-value'      => 0,
+			'error-check'    => undef,
+			'usage'          => { 'en' => <<EOF
+--no-compute-missing       Don't compute or store missing MD5 checksums
+EOF
+			}
+		},
+		
+		# === discard-existing ===
+		'discard-existing' => { 
+			'short'          => '-d', 
+			'long'           => '--discard-existing', 
+			'core-option'    => 1,
+			'default'        => 0,
+			'takes-arg'      => 0,
+			'set-additional' => undef,
+			'error-check'    => undef,
+			'usage'          => { 'en' => <<EOF
+-d | --discard-existing    Discard existing checksums and recompute them
+EOF
+			}
+		},
+		
+		# === escape-filenames ===
+		'escape-filenames' => { 
+			'short'          => undef, 
+			'long'           => '--escape-filenames', 
+			'core-option'    => 0,
+			'default'        => undef,
+			'takes-arg'      => 1,
+			'set-additional' => undef,
+			'error-check'    => sub {
+				my ($COMMAND, $OPTION, $_options, $_targets) = @_;
+				#print "$$_options{$OPTION}\n";
+				unless ( $$_options{$OPTION} =~ /^(octal|hex|HEX|shell|uri|URI)$/ ){
+					return [ 'ERROR', { 'en' => 'Parameter for escape-filenames can only be one of octal, hex, HEX, shell, uri, or URI.' } ];
+				}
+				return undef;
+			},
+			'usage'          => { 'en' => <<EOF
+--escape-filenames=MODE    Escape special characters in file and directory names
+                           MODE can be octal, hex, HEX, shell, uri, or URI.
+                           
+                           In shell mode strings with special characters will 
+                           have them octal encoded and wrapped so as to be 
+                           suitable for direct shell usage (i.e. ESCAPED 
+                           becomes \$'ESCAPED').
+                           
+                           In both URI modes strings with special characters 
+                           will have them hex encoded in a format suitable for 
+                           usage in a URI (i.e. as \%XX where X is a hex digit).
+                           
+                           Lowercase hex digits are output in hex and uri modes.
+                           Uppercase hex digits are output in HEX and URI modes.
+EOF
+			}
+		},
+		
+		# === ignore-symlinks ===
+		'ignore-symlinks' => { 
+			'short'          => '-E', 
+			'long'           => '--ignore-symlinks', 
+			'core-option'    => 1,
+			'default'        => 0,
+			'takes-arg'      => 0,
+			'set-additional' => undef,
+			'error-check'    => undef,
+			'usage'          => { 'en' => <<EOF
+-E | --ignore-symlinks     Directories holding only symlinks or subdirectories 
+                           (no regular files) are considered empty.
+EOF
+			},
+		},
+		
+		# === link-relative ===
+		'link-relative' => { 
+			'short'          => '-l', 
+			'long'           => '--link-relative', 
+			'core-option'    => 0,
+			'default'        => undef,
+			'takes-arg'      => 0,
+			#'set-additional' => [ 'LINK', 'relative' ],
+			'error-check'    => sub {
+				my ($COMMAND, $OPTION, $_options, $_targets) = @_;
+				if ( $$_options{'link-relative'} && $$_options{'link-absolute'} ) {
+					return [ 'ERROR', { 'en' => 'Cannot specify both link-relative and link-absolute.' } ];
+				}
+				return undef;
+			},
+			'usage'          => { 'en' => <<EOF
+-l | --link-relative       When symlinking always use relative links
+EOF
+			}
+		},
+		
+		# === link-absolute ===
+		'link-absolute' => { 
+			'short'          => '-L', 
+			'long'           => '--link-absolute', 
+			'core-option'    => 0,
+			'default'        => undef, # defined under link_relative, above
+			'takes-arg'      => 0,
+			#'set-additional' => [ 'LINK', 'absolute' ],
+			'error-check'    => undef, # Handled by link-relative, above
+			'usage'          => { 'en' => <<EOF
+-L | --link-absolute       When symlinking always use absolute links
+EOF
+			}
+		},
+		
+		# === move-to ===
+		'move-dupes' => { 
+			'short'          => '-m', 
+			'long'           => '--move-to', 
+			'core-option'    => 0,
+			'default'        => undef,
+			'takes-arg'      => 1, 
+			'set-additional' => undef,
+			'error-check'    => sub {
+				my ($COMMAND, $OPTION, $_options, $_targets) = @_;
+				unless (
+				         ( defined $$_options{'move-dupes'} ) &&
+				         ( -d $$_options{'move-dupes'} )
+				       ) {
+					return [ 'ERROR', { 'en' => 'You must supply an existing directory when using the move-dupes option.' } ];
+				}
+				return undef;
+			},
+			'usage'          => { 'en' => <<EOF
+-m DIR | --move-dupes DIR  Move duplicate files into the directory DIR 
+EOF
+			}
+		},
+		
+		# === same-name ===
+		'same-name' => { 
+			'short'          => '-n', 
+			'long'           => '--same-name', 
+			'core-option'    => 1,
+			'default'        => 0,
+			'takes-arg'      => 0,
+			'set-additional' => undef,
+			'error-check'    => undef,
+			'usage'          => { 'en' => <<EOF
+-n | --same-name           For a file to match it must have same filename (case-
+                           insensitive) as well as the same fingerprint.
+                           At some point a --case-insensitive option may be 
+                           added; if this is done, the --same-name option will 
+                           be case-sensitive unless case-insensitivity is 
+                           explicitly requested.
+EOF
+			}
+		},
+		
+		# === long-names ===
+		'long-names' => { 
+			'short'          => '-N', 
+			'long'           => '--long-names', 
+			'core-option'    => 0,
+			'default'        => 0,
+			'takes-arg'      => 0,
+			'set-additional' => undef,
+			'error-check'    => undef,
+			'usage'          => { 'en' => <<EOF
+-N | --long-names          Also show full path when displaying duplicates or 
+                           orphans
+EOF
+			}
+		},
+		
+		# === long-names ===
+		'never-rewrite-checksums' => { 
+			'short'          => undef, 
+			'long'           => '--never-rewrite-checksums', 
+			'core-option'    => 1,
+			'default'        => 0,
+			'takes-arg'      => 0,
+			'set-additional' => undef,
+			'error-check'    => undef,
+			'usage'          => { 'en' => <<EOF
+--never-rewrite-checksums  If set then neither extended attributes nor the 
+                           .md5sums files will be written to under any 
+                           circumstances.
+EOF
+			}
+		},
+		
+		# === overwrite ===
+		'overwrite' => { 
+			'short'          => '-O', 
+			'long'           => '--overwrite', 
+			'core-option'    => 1,
+			'default'        => undef,
+			'takes-arg'      => 0,
+			'set-additional' => [ 'OVERWRITE', 1 ], # always overwrite
+			'error-check'    => sub {
+				my ($COMMAND, $OPTION, $_options, $_targets) = @_;
+				if ( $$_options{'overwrite'} && $$_options{'preserve'} ) {
+					return [ 'ERROR', { 'en' => 'Cannot specify both overwrite and preserve.' } ];
+				}
+				return undef;
+			},
+			'usage'          => { 'en' => <<EOF
+-O | --overwrite           Allow overwriting of existing files
+EOF
+			}
+		},
+		
+		# === preserve ===
+		'preserve' => { 
+			'short'          => '-P', 
+			'long'           => '--preserve', 
+			'core-option'    => 1,
+			'default'        => undef,
+			'takes-arg'      => 0,
+			'set-additional' => [ 'OVERWRITE', 0 ], # never overwrite
+			'error-check'    => undef, # Handled by overwrite, above
+			'usage'          => { 'en' => <<EOF
+-P | --preserve            Never overwrite existing files
+                           Attempting to overwrite an exising file will display 
+                           a warning to STDERR then continue.
+EOF
+			}
+		},
+		
+		# === recurse ===
+		'recurse' => { 
+			'short'          => '-r', 
+			'long'           => '--recurse', 
+			'core-option'    => 1,
+			'default'        => 1,
+			'takes-arg'      => 0,
+			'set-key'        => 'recurse',
+			'set-value'      => 1,
+			#'set-additional' => [ 'RECURSE', 1 ],
+			'error-check'    => sub {
+				my ($COMMAND, $OPTION, $_options, $_targets) = @_;
+				
+				if ( $$_options{'recurse'} && $$_options{'no-recurse'} ) {
+					return [ 'ERROR', { 'en' => 'Cannot specify both recurse and no-recurse.' } ];
+				}
+				return undef;
+			},
+			'usage'          => { 'en' => <<EOF
+-r | --recurse             Recurse into subdirectories (default)
+EOF
+			}
+		},
+		
+		# === no-recurse ===
+		'no-recurse' => { 
+			'short'          => '-R', 
+			'long'           => '--no-recurse', 
+			'core-option'    => 1,
+			'default'        => undef, # defined under recurse, above
+			'takes-arg'      => 0,
+			'set-key'        => 'recurse',
+			'set-value'      => 0,
+			#'set-additional' => [ 'RECURSE', 0 ],
+			'error-check'    => undef, # Handled by recurse, above
+			'usage'          => { 'en' => <<EOF
+-R | --no-recurse          Do not recurse into subdirectories
+EOF
+			}
+		},
+		
+		# === one-filesystem ===
+		'one-filesystem' => { 
+			'short'          => '-x', 
+			'long'           => '--one-filesystem', 
+			'core-option'    => 1,
+			'default'        => 0, 
+			'takes-arg'      => 0,
+			'set-additional' => undef,
+			'error-check'    => undef,
+			'usage'          => { 'en' => <<EOF
+-x | --one-filesystem      Don't cross filesystem boundaries while recursing
+EOF
+			}
+		}
+		
+	);
+}
+
+
+
+
+
+
+
+# ******************************************************************************
+# ***  Support functions                                                     ***
+# ******************************************************************************
+
+
+
+# ==============================================================================
+# === Parse commandline options                                              ===
+# ==============================================================================
+# 
+# Parsed commandline is stored in %$_OPTIONS and @$_OBJECTS
+# 
+# $COMMAND             -> Name of the running command
+# $_ARGV               -> The ARGV array (raw commandline)
+# $_OPTIONS            -> Hash of current commandline options                (initially empty)
+# $_OBJECTS            -> Array of files and directories to process          (initially empty)
+# $_AVAILABLE_COMMANDS -> Hash describing the available command modes        (includes localized strings)
+# $_AVAILABLE_OPTIONS  -> Hash describing the available commandline options  (includes localized strings)
+# $_STRINGS            -> Hash miscellaneous character stings                (includes localized strings)
+#
+# This function only parses commandline options.
+# No error checking is done.
+#
+# === Additional options set by script ===
+# 
+# Set in GetOptions
+# -----------------
+#
+# COMMAND     -> The name of currently-running command
+#
+# _COMMAND    -> Reference to the currently-running command's descriptor
+# 
+# Set in main before each top-level call of ProcessDir
+# ----------------------------------------------------
+#
+# SCAN_OBJECT -> The path of the top-level object being scanned
+#
+# Set in ProcessDir
+# -----------------
+#
+# CUR_SCAN    -> Hash of scan descriptors (keyed by $object).
+#                Hash contains:
+#                    object -> The name of the object being scanned (same as key),
+#                    directory -> The directory that contains the object.
+#                    objects   -> Directory mode:     List of names of all objects in directory.
+#                                 Single-object mode: The object's name plus possibly ".md5sums", and ".no_md5sums".
+#                    scan_mode -> Either SCAN_MODE_SINGLE_OBJECT or SCAN_MODE_DIRECTORY.
+#                    no_scan   -> Set true if directory contains ".no_md5sums".
+# 
+# CUR_OBJECT  -> The path of the object used to call the current iteration of ProcessDur.
+#                This is either a directory (directory mode, single-object mode) 
+#                or a file or other object (single-object mode).
+#                This is the same as the $object variable in ProcessDir.
+# 
+sub GetOptions($$$$$$$) {
+	my ($COMMAND, $_ARGV, $_OPTIONS, $_OBJECTS, $_AVAILABLE_COMMANDS, $_AVAILABLE_OPTIONS, $_STRINGS) = @_;
+	
+	my %valid_short_options = ();
+	my %valid_long_options = ();
+	
+	# Cross-link and label commands and options
+	# Catalog valid commands and regular options
+	foreach my $key ( keys %$_AVAILABLE_COMMANDS ) {
+		$$_AVAILABLE_COMMANDS{$key}{'IS'} = 'command';
+		$$_AVAILABLE_COMMANDS{$key}{'NAME'} = $key;
+		$valid_short_options{$$_AVAILABLE_COMMANDS{$key}{'short'}} = $$_AVAILABLE_COMMANDS{$key};
+		$valid_long_options{$$_AVAILABLE_COMMANDS{$key}{'long'}}   = $$_AVAILABLE_COMMANDS{$key};
+	}
+	
+	foreach my $key ( keys %$_AVAILABLE_OPTIONS ) {
+		$$_AVAILABLE_OPTIONS{$key}{'IS'} = 'option';
+		$$_AVAILABLE_OPTIONS{$key}{'NAME'} = $key;
+		$valid_short_options{$$_AVAILABLE_OPTIONS{$key}{'short'}} = $$_AVAILABLE_OPTIONS{$key};
+		$valid_long_options{$$_AVAILABLE_OPTIONS{$key}{'long'}}   = $$_AVAILABLE_OPTIONS{$key};
+	}
+	
+	# Notes the syntax used for each seen option
+	my %option_given_as = ();
+	
+	#foreach my $arg (@$_ARGV) {
+	while (scalar @$_ARGV) {
+		my $arg = shift @$_ARGV;
+		
+		# options may need to be split (short options can be combined)
+		
+		my @split;
+		
+		# Handle parameters included with the option
+		if ( $arg =~ /^([^=]+)=(.+)$/ ) {
+			$arg = $1;
+			unshift @$_ARGV, $2;
+		}
+		
+		# The prefix used for the current option(s)
+		my $current_prefix = '';
+		
+		# Split current argument into possibly multiple options
+		if ( $arg =~ /^--/ ) {
+			# long option
+			@split = ( $arg );
+			$current_prefix = '--';
+			
+		} elsif ( $arg =~ /^-/ ) {
+			# short option(s)
+			( undef, @split ) =  map { "-$_" } split //, $arg;
+			$current_prefix = '-';
+			
+		} else {
+			# No leading dash
+			# Looks dodgy but we'll see what the rest of the parser has to say...
+			@split = ( $arg );
+		}
+		
+		# loop through the options given by the current commandline argument...
+		while ( $arg = shift @split ) {
+			
+			if ( ( defined $valid_short_options{$arg} ) && 
+			     ( $valid_short_options{$arg}{'takes-arg'} ) ) {
+				# Current argument is a short option that takes an additional argument
+				#print STDERR "$arg : Short option taking parameter\n";
+				
+				# Make sure we're not in the midst of combined options
+				if ( @split ) {
+					# not at the end of a combined command
+					print STDERR "ERROR: Option $arg taking an additional parameter isn't last in combined short option list\n";
+					exit;
+				}
+				
+				# Make sure we're not at the end of the commandline
+				unless ( @$_ARGV ) {
+					# not at the end of a combined command
+					print STDERR "ERROR: Option $arg expected an additional parameter but no arguments remain\n";
+					exit;
+				}
+				
+				# Determine the key to use
+				my $hash_key = ( defined $valid_short_options{$arg}{'set-key'} ) 
+				             ? $valid_short_options{$arg}{'set-key'}
+				             : $valid_short_options{$arg}{'NAME'};
+				
+				# Grab the next commandline option and use it as the current option's parameter
+				$$_OPTIONS{ $hash_key } = shift @$_ARGV;
+				#print "$arg -> Setting \$\$_OPTIONS{ $hash_key } to $$_OPTIONS{ $hash_key }\n";
+				
+				$option_given_as{ $hash_key } = $arg;
+				
+				#my $blank = $arg; $blank =~ s/./ /g;
+				#print STDERR "$blank   Parameter = $$_OPTIONS{ $valid_short_options{$arg}{'NAME'} }\n";
+				
+				# END - Short option taking parameter
+				
+				
+				
+			} elsif ( ( defined $valid_long_options{$arg} ) && 
+			          ( $valid_long_options{$arg}{'takes-arg'} ) ) {
+				# Current argument is a long option that takes an additional argument
+				#print STDERR "$arg : Long option taking parameter\n";
+				
+				# Make sure we're not at the end of the commandline
+				unless ( @$_ARGV ) {
+					# not at the end of a combined command
+					print STDERR "ERROR: Option $arg expected an additional parameter but no arguments remain\n";
+					exit;
+				}
+				
+				# Determine the key to use
+				my $hash_key = ( defined $valid_long_options{$arg}{'set-key'} ) 
+				             ? $valid_long_options{$arg}{'set-key'}
+				             : $valid_long_options{$arg}{'NAME'};
+				
+				# Grab the next commandline option and use it as the current option's parameter
+				$$_OPTIONS{ $hash_key } = shift @$_ARGV;
+				#print "$arg -> Setting \$\$_OPTIONS{ $hash_key } to $$_OPTIONS{ $hash_key }\n";
+				
+				$option_given_as{ $hash_key } = $arg;
+				
+				#my $blank = $arg; $blank =~ s/./ /g;
+				#print STDERR "$blank : Parameter = $$_OPTIONS{ $valid_long_options{$arg}{'NAME'} }\n";
+				
+				# END - Long option taking parameter
+			
+				
+			} elsif ( defined $valid_short_options{$arg} ) {
+				# Current argument is a regular short option
+				
+				#print STDERR "$arg : Short option\n";
+				
+				# Determine the key to use
+				my $hash_key = ( defined $valid_short_options{$arg}{'set-key'} ) 
+				             ? $valid_short_options{$arg}{'set-key'}
+				             : $valid_short_options{$arg}{'NAME'};
+				
+				# Determine the value to use
+				my $hash_value = ( defined $valid_short_options{$arg}{'set-value'} ) 
+				               ? $valid_short_options{$arg}{'set-value'}
+				               : 1;
+				
+				# Note presence of current option
+				$$_OPTIONS{ $hash_key } = $hash_value;
+				#print "$arg -> Setting \$\$_OPTIONS{ $hash_key } to $hash_value\n";
+				
+				$option_given_as{ $hash_key } = $arg;
+				
+				# END - Regular short option
+			
+			} elsif ( defined $valid_long_options{$arg} ) {
+				# Current argument is a regular long option
+				#print STDERR "$arg : Long option\n";
+				
+				# Determine the key to use
+				my $hash_key = ( defined $valid_long_options{$arg}{'set-key'} ) 
+				             ? $valid_long_options{$arg}{'set-key'}
+				             : $valid_long_options{$arg}{'NAME'};
+				
+				# Determine the value to use
+				my $hash_value = ( defined $valid_long_options{$arg}{'set-value'} ) 
+				               ? $valid_long_options{$arg}{'set-value'}
+				               : 1;
+				
+				# Note presence of current option
+				$$_OPTIONS{ $hash_key } = $hash_value;
+				#print "$arg -> Setting \$\$_OPTIONS{ $hash_key } to $hash_value\n";
+				
+				$option_given_as{ $valid_long_options{$arg}{'NAME'} } = $arg;
+				
+				# END - Regular long option
+			
+			
+			} elsif ( $arg eq '--' ) {
+				# Treat all further commandline arguments as objects to process
+				#print STDERR "$arg : Treating all further commandline arguments as objects to process\n";
+				
+				#foreach my $arg ( @$_ARGV ) {
+				#	print STDERR "$arg : Object to process\n";
+				#}
+				
+				push @$_OBJECTS, @$_ARGV;
+				@$_ARGV = ();
+				
+				# END - Treat all further commandline arguments as objects to process
+			
+			} elsif ( $arg =~ /^-/ ) {
+				# Unknown option
+				
+				# Add it to the list of options anyway
+				# This way it can later be shown as invalid
+				$$_OPTIONS{ $arg } = 1;
+				
+				$option_given_as{ $arg } = $arg;
+				
+				# END - Unknown option
+			
+			} else {
+				# Not an option; treat it as an object to process
+				#print STDERR "$arg : Object to process\n";
+				
+				push @$_OBJECTS, $arg;
+			}
+		
+		} # END - Loop through current commandline argument
+		
+	} # END - Loop through all commandline arguments
+	
+#	print "\n";
+	
+	
+	# === Determine command ===
+	
+	# Preliminarily record command name
+	my $ACTUAL_COMMAND = $COMMAND;
+	
+	# Reference to command in commands hash (set below)
+	my $_COMMAND = undef;
+	
+	# Keep track of how many commands have been specified
+	my $command_count = ( $COMMAND eq 'checksum_tool' ) ? 0 : 1;
+	
+	# Look for commands amongst the active options...
+	foreach my $key ( keys %$_OPTIONS ) {
+		if ( defined $$_AVAILABLE_COMMANDS{ $key } ) {
+			# Option is a command
+			
+			next if ( $key =~ /^help/);
+			
+			unless ( $key eq $COMMAND ) {
+				# Command named by option not the same as the one used used to run the program
+				$ACTUAL_COMMAND = $key;
+				#print "COMMAND: $key\n";
+				$command_count++;
+			}
+		}
+	}
+	
+	
+	if ( 
+	     ( $command_count == 0 ) &&
+	     ( ! ( $$_OPTIONS{'help'} || $$_OPTIONS{'help-all'} || $$_OPTIONS{'help-core'} ) )
+	   ) {
+		print STDERR Localize( $STRINGS{'ERROR'} ) . " " . Localize( $STRINGS{'no-command-specified'} ) . "\n";
+		print STDERR Localize( $STRINGS{'run-help-to-see-options'} ) . "\n";
+		exit;
+		
+	} elsif ( $command_count > 1 ) {
+		print STDERR Localize( $STRINGS{'ERROR'} ) . " " . Localize( $STRINGS{'multiple-commands-given'} ) . "\n";
+		exit;
+		
+	} else {
+		# Note shortcut to command
+		
+		# Determine command's internal name from its (filesystem) command name
+		foreach my $command_name ( keys %$_AVAILABLE_COMMANDS ) {
+			if ( $$_AVAILABLE_COMMANDS{$command_name}{'alias'} eq $ACTUAL_COMMAND ) {
+				$ACTUAL_COMMAND = $command_name;
+				last;
+			}
+		}
+		
+		$_COMMAND = $$_AVAILABLE_COMMANDS{ $ACTUAL_COMMAND };
+	}
+	
+	
+	# === Special case for help, help-all, and help-core ===
+	
+	if ( $$_OPTIONS{'help'} || $$_OPTIONS{'help-all'} || $$_OPTIONS{'help-core'} ) {
+		Usage( $ACTUAL_COMMAND, \%OPTIONS, \%AVAILABLE_COMMANDS, \%AVAILABLE_OPTIONS, \%STRINGS );
+		exit;
+	}
+	
+	
+	# === Check for use of options not supported by current command (supported-options) ===
+	
+	if ( $$_COMMAND{'supported-options'} ) {
+		# Restricted set of options specified
+		
+		# Determine which options are supported
+		my %option_supported = ();
+		
+		# The command being runis always supported
+		$option_supported{$ACTUAL_COMMAND} = 1;
+		
+		# Determine which options are always supported
+		foreach my $option ( keys %$_AVAILABLE_OPTIONS ) {
+			if ( $$_AVAILABLE_OPTIONS{$option}{'core-option'} ) {
+				$option_supported{$option} = 1;
+			}
+		}
+		
+		foreach my $option ( @{$$_COMMAND{'supported-options'}} ) {
+			unless ( defined $$_AVAILABLE_OPTIONS{$option} ) {
+				print STDERR Localize( $STRINGS{'INTERNAL-ERROR'} ) . " " . Localize( $STRINGS{'undefined-option'} ) . "$option\n";
+				exit;
+			}
+			$option_supported{$option} = 1;
+		}
+		
+		my $fatal = 0;
+		
+		# Loop through supported options...
+		foreach my $option ( sort keys %$_OPTIONS ) {
+			unless ( $option_supported{$option} ) {
+				print STDERR Localize( $$_STRINGS{'ERROR'} ) . " " . Localize( $$_STRINGS{'unsupported-option'} ) . " $option_given_as{$option}\n";
+				$fatal = 1;
+			}
+		}
+		
+		if ($fatal) {
+			print Localize( $$_STRINGS{'run-help-to-see-options'} ) . "\n";
+			exit;
+		}
+	}
+	
+	
+	# === Basic syntax looks fine ===
+	
+	# Record actual command to run
+	$$_OPTIONS{'COMMAND'} = $ACTUAL_COMMAND;
+	
+		# Add shortcut to command
+	$$_OPTIONS{'_COMMAND'} = $_COMMAND;
+	
+	
+	# === Set default values (default) ===
+	
+#	print "Set default values (default)\n";
+	
+	# Loop through options...
+	foreach my $option ( sort keys %$_AVAILABLE_OPTIONS ) {
+		if ( ( ! exists $$_OPTIONS{$option} ) &&
+		     ( defined $$_AVAILABLE_OPTIONS{ $option } ) &&
+		     ( defined $$_AVAILABLE_OPTIONS{ $option }{ 'default' } ) ) {
+#			print "\tSetting \$\$_OPTIONS{$option} = $$_AVAILABLE_OPTIONS{ $option }{ 'default' };\n";
+			$$_OPTIONS{$option} = $$_AVAILABLE_OPTIONS{ $option }{ 'default' };
+		}
+	}
+	
+#	print "\n";
+	
+	
+	# === Set default values (for commands) ===
+	
+	$$_OPTIONS{'use-checksums'}              = 1 unless ( defined $$_OPTIONS{'use-checksums'} );
+	$$_OPTIONS{'skip-if-no_md5sums-present'} = 1 unless ( defined $$_OPTIONS{'skip-if-no_md5sums-present'} );
+	
+	
+	# === Perform custom option-setting (set-additional) ===
+	
+#	print "Perform custom option-setting (set-additional)\n";
+	
+	# Loop through options...
+	foreach my $option ( sort keys %$_OPTIONS ) {
+#		print "\t$option\n";
+		if ( ( exists $$_OPTIONS{$option} ) &&
+		     ( defined $$_AVAILABLE_OPTIONS{ $option } ) &&
+		     ( defined $$_AVAILABLE_OPTIONS{ $option }{ 'set-additional' } ) ) {
+			my ( $key, $value ) = @{ $$_AVAILABLE_OPTIONS{ $option }{ 'set-additional' } };
+#			print "\t\tSetting $key to $value\n";
+			$$_OPTIONS{$key} = $value;
+		}
+	}
+	
+#	print "\n";
+	
+	
+	# === Run options' validation code (error-check) ===
+	
+	my $fatal = 0; # Set true if fatal exceptions were found
+	
+	# Loop through options...
+	foreach my $option ( sort keys %$_OPTIONS ) {
+		if ( ( exists $$_AVAILABLE_OPTIONS{ $option } ) &&
+		     ( defined $$_AVAILABLE_OPTIONS{ $option }{ 'error-check' } ) ) {
+			
+			#print "Calling error-check for $option\n";
+			my $_exceptions = &{ $$_AVAILABLE_OPTIONS{ $option }{ 'error-check' } }( $$_OPTIONS{'COMMAND'}, $option, $_OPTIONS, $_OBJECTS );
+			
+			if ( ref $_exceptions ) {
+				# Exceptions were found
+				
+				# Loop through exceptions...
+				while ( @$_exceptions ) {
+					my $type = shift @$_exceptions;
+					my $message = shift @$_exceptions;
+					
+					$fatal = 1 if ( $type eq 'ERROR' );
+					
+					print STDERR Localize( $$_STRINGS{$type} ) . " " . Localize( $message ) . "\n";
+				}
+				
+			}
+		}
+	}
+	
+	exit if ($fatal);
+	
+	
+	# === Platform-specific options ===
+	
+	unless ( exists $$_OPTIONS{'CP'} ) {
+		# === Platform-specifc commandline copy command ===
+		
+		if ( $^O eq 'linux' ) {
+			# Linux
+			$$_OPTIONS{'CP'} = 'cp -ap';
+			
+		} elsif ( $^O eq 'darwin' ) {
+			# Mac OS X/Darwin
+			$$_OPTIONS{'CP'} = 'cp -ap';
+			
+		} elsif ( $^O eq 'solaris' ) {
+			# Solaris
+			$$_OPTIONS{'CP'} = '/usr/bin/cp -p';
+			
+		} elsif ( $^O eq 'freebsd' ) {
+			# FreeBSD 5.0+
+			$$_OPTIONS{'CP'} = '/usr/bin/cp -p';
+			
+		} elsif ( $^O eq 'netbsd' ) {
+			# NetBSD 3.0+
+			$$_OPTIONS{'CP'} = 'cp -p';
+			
+		} else {
+			print STDERR Localize( $STRINGS{'WARNING'} ) . " " . Localize( $STRINGS{'no-native-cp'} ) . "\n";
+		}
+	}
+	
+	if ( exists $$_OPTIONS{'CP'} ) {
+		# Split command and arguments for later passing to system()
+		$$_OPTIONS{'_CP'} = [ split /\s+/, $$_OPTIONS{'CP'} ];
+	}
+	
+	
+#	print "\n--------------------------------------------------------------------------------\n\n";
+#	
+#	
+#	print "Command:\n";
+#	
+#	print "$$_OPTIONS{'COMMAND'}\n";
+#	
+#	print Dumper( $$_OPTIONS{'_COMMAND'} );
+#	
+#	print "\n";
+#	
+#	
+#	print "Options:\n";
+#	foreach my $key ( sort keys %$_OPTIONS ) {
+#		print "$key -> $$_OPTIONS{$key}\n";
+#	}
+#	
+#	print "\n";
+#	
+#	
+#	print "Objects:\n";
+#	foreach my $object ( @$_OBJECTS ) {
+#		print "$object\n";
+#	}
+#	
+#	
+#	print "\n--------------------------------------------------------------------------------\n\n";
+	
+	# === Return the name of the actual command being run ===
+	return $ACTUAL_COMMAND;
+}
+
+
+
+
+
+# ==============================================================================
+# === Logging functions (currenly NOOPs)                                     ===
+# ==============================================================================
+
+sub OPEN_LOG() {
+	#my $logfile = ".md5sums.log.$src.$dst";
+	#$logfile =~ s/\//__/g;
+	#open LOGFILE, ">$logfile";
+}
+
+sub LOG($) {
+	#print LOGFILE $_[0];
+	#print STDERR $_[0];
+}
+
+sub CLOSE_LOG() {
+	#close LOGFILE;
+}
+
+
+
+
+
+
+
+
+
+
+
+# ******************************************************************************
+# ***  Core functions                                                        ***
+# ******************************************************************************
+
+
+
+
+
+# ==============================================================================
+# === Alias support for hashes                                               ===
+# ==============================================================================
+
+
+# Replaces function aliases with references to the pointed to functions.
+#
+# Alias format is 'ALIAS {COMMAND}{FUNCTION}' where COMMAND and FUNCTION are
+# the top-level and second-level keys in the passed datastructure.  Both 
+# COMMAND and FUNCTION can optionally be quoted.  See also ALIAS(...) for 
+# some syntatic sugar.
+#
+# IN: %commands -> Hash containing command descriptors (passed by reference)
+sub COOK(\%) {
+    my ($_commands) = @_;
+    
+    # Loop through commands...
+    foreach my $command ( keys %$_commands ) {
+        
+        # Loop through functions...
+        foreach my $function ( keys %{$$_commands{$command}} ) {
+            
+            # Only consider strings
+            next if ( ref $$_commands{$command}{$function} );
+            
+            # Does the string look like an alias?
+            if ( $$_commands{$command}{$function} 
+                 =~ /^ALIAS\s+
+                      \{
+                         (
+                           (?: [a-zA-Z0-9_-]+ ) | 
+                           (?:'[a-zA-Z0-9_-]+') | 
+                           (?:"[a-zA-Z0-9_-]+") 
+                         )
+                      \}
+                      \{
+                         (
+                           (?: [a-zA-Z0-9_-]+ ) | 
+                           (?:'[a-zA-Z0-9_-]+') | 
+                           (?:"[a-zA-Z0-9_-]+")  
+                         )
+                      \}
+                     $/x ) {
+                
+                # Matched, find where it points to
+                my ($link_to_command, $link_to_function) = ($1, $2);
+                $link_to_command  =~ s/['"]//g;
+                $link_to_function =~ s/['"]//g;
+                
+                # Sanity check
+                unless (ref $$_commands{$link_to_command}{$link_to_function} eq 'CODE') {
+                    die "In COOK(...), {$command}{$function} points to " .
+                        "{$link_to_command}{$link_to_function} " .
+                        "which is not a subroutine reference";
+                }
+                
+                # Replace string with reference to pointed-to function
+                $$_commands{$command}{$function} 
+                    = $$_commands{$link_to_command}{$link_to_function};
+            } # END - Alias handler
+        } # END - Functions loop
+    } # END - Commands loop
+} # END - COOK(...)
+
+
+# Function providing syntatic sugar to let one write:
+#   ALIAS 'key' => "{command}{function}"
+#
+# instead of:
+#   'key' => "ALIAS {command}{function}"
+#
+# This makes aliased functions more visible and makes it easier to write an 
+# appropriate code syntax highlighting pattern.
+#
+# See also COOK(...)
+sub ALIAS($$@) {
+    my ($key, $alias, @rest) = @_;
+    return $key, "ALIAS $alias", @rest;
+}
+
+
+# Call a command's function by name
+#
+# Syntax of $call_path is the same as that used for ALIAS.
+#
+# This function is not currently used.
+#
+sub CALL($@) {
+	my ( $call_path, @args ) = @_;
+	
+	unless ( $call_path =~ /^
+	                        \{
+	                           (
+	                             (?: [a-zA-Z0-9_-]+ ) | 
+	                             (?:'[a-zA-Z0-9_-]+') | 
+	                             (?:"[a-zA-Z0-9_-]+") 
+	                           )
+	                        \}
+	                        \{
+	                           (
+	                             (?: [a-zA-Z0-9_-]+ ) | 
+	                             (?:'[a-zA-Z0-9_-]+') | 
+	                             (?:"[a-zA-Z0-9_-]+")  
+	                           )
+	                        \}
+	                        $/x ) {
+		print STDERR Localize( $STRINGS{'INTERNAL-ERROR'} ) . " " . Localize( $STRINGS{'invalid-call-path'} ) . " $call_path\n";
+		exit;
+	}
+	
+	my ( $command, $function ) = ( $1, $2 );
+	
+	# This function directly accesses the global commands datastructure.
+	
+	unless (
+	         ( exists  $AVAILABLE_COMMANDS{$command} ) && 
+	         ( exists  $AVAILABLE_COMMANDS{$command}{$function} ) &&
+	         ( defined $AVAILABLE_COMMANDS{$command}{$function} ) 
+	       ) {
+		print STDERR Localize( $STRINGS{'INTERNAL-ERROR'} ) . " " . Localize( $STRINGS{'invalid-call-path'} ) . " $call_path\n";
+		exit;
+	}
+	
+	&{ $AVAILABLE_COMMANDS{$command}{$function} }( @args );
+}
+
+
+
+# ==============================================================================
+# === Basic file metadata support                                            ===
+# ==============================================================================
+
+
+# === Get file's current modification time and size ===
+sub StatFile($) {
+	my ($path) = @_;
+	my ($dev,$ino,undef,undef,undef,undef,undef,$size,undef,$mtime,undef,undef,undef) = stat($path);
+	return ($dev, $ino, $mtime, $size);
+}
+
+
+
+
+
+# === Compute MD5 checksum of file's content ===
+sub ComputeMD5($) {
+	my ($path) = @_;
+	print STDERR "Computing MD5 checksum for '$path'\n";
+	unless ( open(FILE, "<", $path) ) {
+		print STDERR "Warning: Can't open '$path': $!\n";
+		return undef;
+	}
+	binmode(FILE);
+	my $md5 = Digest::MD5->new->addfile(*FILE)->hexdigest;
+	close FILE;
+	return $md5;
+}
+
+
+
+
+
+# ==============================================================================
+# === Checksum file support (.md5sums)                                       ===
+# ==============================================================================
+
+
+# === Add file and metadata to checksum file ===
+# metadata:
+# md5   => file's MD5 checksum
+# mtime => file's modification time
+# size  => file's size in bytes
+# path  => directory containing the file (not stored)
+# name  => file's name
+sub AddToChecksumFile($$) {
+	my ($_md5sums, $_metadata) = @_;
+	push @{$$_md5sums{$$_metadata{md5}}}, $_metadata;
+}
+
+
+
+
+
+# === Write a new checksum file to disk ====
+sub WriteChecksumFile($$) {
+	my ($dir, $_metadata) = @_;
+	LOG( "WriteChecksumFile($dir, {metadata})\n" );
+	#LOG( Dumper($_metadata) );
+	my ($dir, $_metadata) = @_;
+	open OUT, ">", "$dir/.md5sums";
+	print OUT "v2\n";
+	foreach my $md5 (keys %$_metadata) {
+		foreach my $_file (@{$$_metadata{$md5}}) {
+			print OUT "$md5\t$$_file{mtime}\t$$_file{size}\t$$_file{name}\n";
+			LOG( "$md5\t$$_file{mtime}\t$$_file{size}\t$$_file{name}\n" );
+		}
+	}
+	close OUT;
+	LOG( "END WriteChecksumFile($dir, {metadata})\n" );
+}
+
+
+
+
+
+# ==============================================================================
+# === Extended attribute support                                             ===
+# ==============================================================================
+
+
+# === Get recorded MD5 checksum, modification time, size, and checksum       ===
+# === format version from extended attributes                                ===
+sub GetXA($$) {
+	my ($path, $_OPTIONS) = @_;
+	#my $xa_md5       = `getfattr --only-values -n user.md5 "$path" 2>/dev/null`;
+	#my $xa_md5_mtime = `getfattr --only-values -n user.md5_mtime "$path" 2>/dev/null`;
+	#my $xa_md5_size  = `getfattr --only-values -n user.md5_size "$path" 2>/dev/null`;
+	
+	my ( $xa_md5, $xa_md5_mtime, $xa_md5_size );
+	my $found_version = undef;
+	my $rewrite = 0;
+	
+	# Version 2
+	my $xa_combined  = getfattr( $path, '_', { namespace => 'user' } );
+	if ($xa_combined =~ /^([0-9a-fA-F]{32}):(\d+):(\d+)$/) {
+		( $xa_md5, $xa_md5_mtime, $xa_md5_size ) = ( $1, $2, $3 );
+		#print "$path: Checksum v2: $xa_md5, $xa_md5_mtime, $xa_md5_size\n";
+		$found_version = 2;
+		
+	} else {
+		# Version 1
+		$xa_md5       = getfattr( $path, 'md5', { namespace => 'user' } );
+		$xa_md5_mtime = getfattr( $path, 'md5_mtime', { namespace => 'user' } );
+		$xa_md5_size  = getfattr( $path, 'md5_size', { namespace => 'user' } );
+		$xa_md5       = undef unless ($xa_md5 ne "");
+		$xa_md5_mtime = undef unless ($xa_md5_mtime ne "");
+		$xa_md5_size  = undef unless ($xa_md5_size ne "");
+		
+		if ( 
+		     ( defined $xa_md5 ) && 
+		     ( defined $xa_md5_mtime ) && 
+		     ( defined $xa_md5_size ) 
+		   ) {
+			#print "$path: Checksum v1: $xa_md5, $xa_md5_mtime, $xa_md5_size\n";
+			$found_version = 1;
+			$rewrite = 1;
+		}
+	}
+	
+	#print "$path: No checksum found in XA\n" unless ($found_version);
+	
+	if ( $rewrite && ( ! $$_OPTIONS{'never-rewrite-checksums'} ) ) {
+		ClearXA($path, $_OPTIONS);
+		#print STDERR "Writing XA\n";
+		#print join( "\n", get_stack_trace() ) . "\n";
+		WriteXA($path, { 'md5' => $xa_md5, 'mtime' => $xa_md5_mtime, 'size' => $xa_md5_size }, $_OPTIONS);
+	}
+	
+	return ($xa_md5, $xa_md5_mtime, $xa_md5_size);
+}
+
+
+
+
+
+# === Write current metadata to file's extended attributes ===
+sub WriteXA($$$) {
+	my ($filepath, $_metadata, $_OPTIONS) = @_;
+	#print Dumper($_metadata);
+	#`setfattr -n user.md5       -v $$_metadata{md5}   "$filepath"`;
+	#`setfattr -n user.md5_mtime -v $$_metadata{mtime} "$filepath"`;
+	#`setfattr -n user.md5_size  -v $$_metadata{size}  "$filepath"`;
+	
+	# Version 1
+	#setfattr( $filepath, 'md5',       $$_metadata{md5},   { namespace => 'user' } );
+	#setfattr( $filepath, 'md5_mtime', $$_metadata{mtime}, { namespace => 'user' } );
+	#setfattr( $filepath, 'md5_size',  $$_metadata{size},  { namespace => 'user' } );
+	
+	# Version 2
+	unless ( $$_OPTIONS{'never-rewrite-checksums'} ) {
+		setfattr( $filepath, '_', "$$_metadata{md5}:$$_metadata{mtime}:$$_metadata{size}", { namespace => 'user' } );
+	}
+}
+
+
+
+
+
+# === Clear metadata from file's extended attributes ===
+sub ClearXA($$) {
+	my ($filepath, $_OPTIONS) = @_;
+	unless ( $$_OPTIONS{'never-rewrite-checksums'} ) {
+		delfattr( $filepath, '_',         { namespace => 'user' } );
+		delfattr( $filepath, 'md5',       { namespace => 'user' } );
+		delfattr( $filepath, 'md5_mtime', { namespace => 'user' } );
+		delfattr( $filepath, 'md5_size',  { namespace => 'user' } );
+	}
+}
+
+
+
+
+
+# ==============================================================================
+# === Filesystem manipulation functions                                      ===
+# ==============================================================================
+
+
+# === Unlink a file if it exists ===
+#
+# Exact behavior varies depending on the options set:
+#
+# • If --preserve is set and file exists then the program will display an 
+#   error message and terminate.
+# • If --overwrite is set then existing files will be silently removed.
+# • If neither option is set then any existing file will be removed and a 
+#   message will be displayed.
+#
+# If the --no-act option is active then any deletion will be simulated.
+sub Unlink($$$$) {
+	my ($path, $_user, $_OPTIONS, $_STRINGS) = @_;
+	
+	my $path_exists = (
+	                    $$_OPTIONS{'no-act'} && 
+	                    ( exists $$_user{'FAKE_FILESYSTEM'}{$path} )
+	                  ) 
+	                ? $$_user{'FAKE_FILESYSTEM'}{$path}
+	                : ( -e $path );
+	
+	if ( $path_exists ) {
+		# A backed-up copy of the 
+		#print "OVERWRITE\n";
+		if ( exists $$_OPTIONS{'OVERWRITE'} ) {
+			# Either --overwrite or --preserve option was set
+			
+			if ( $$_OPTIONS{'OVERWRITE'} ) {
+				# --overwrite option set; don't warn about deletion
+				
+				# Unlink existing file
+				print Localize( $STRINGS{'UNLINK'} )  . " $path\n";
+				if ($$_OPTIONS{'no-act'}) {
+					$$_user{'FAKE_FILESYSTEM'}{$path} = ''; # Fake deletion
+				} else {
+					unless ( unlink $path ) {
+						print STDERR Localize( $$_STRINGS{'ERROR'} ) . " $?, $!\n";
+						exit;
+					}
+				}
+				
+			} else {
+				# --preserve option set, deletion attempt is fatal
+				
+				print Localize( $STRINGS{'ERROR'} ) . ' ' . Localize( $STRINGS{'not-deleting-file'} ) . " $path\n";
+				exit;
+				
+			}
+			
+		} else {
+			print Localize( $STRINGS{'WARNING'} ) . ' ' . Localize( $STRINGS{'overwriting-file'} ) . " $path\n";
+			
+			print Localize( $STRINGS{'UNLINK'} ) . " $path\n";
+			if ($$_OPTIONS{'no-act'}) {
+				$$_user{'FAKE_FILESYSTEM'}{$path} = ''; # Fake deletion
+			} else {
+				unless ( unlink $path ) {
+					print STDERR Localize( $$_STRINGS{'ERROR'} ) . " $?, $!\n";
+					exit;
+				}
+			}
+			
+		}
+		
+	}
+}
+
+
+# === Unlink (always) ===
+# The unlink is always done (--preserve, if present, is ignored)
+sub UnlinkAlways($$$$) {
+	my ($path, $_user, $_OPTIONS, $_STRINGS) = @_;
+	# This doesn't use the Unlink() function since we always want to delete the 
+	# file (ignore the --preserve option)
+	print Localize( $STRINGS{'UNLINK'} )  . " $path\n";
+	if ($$_OPTIONS{'no-act'}) {
+		$$_user{'FAKE_FILESYSTEM'}{$path} = ''; # Fake deletion
+	} else {
+		unless ( unlink $path ) {
+			print STDERR Localize( $$_STRINGS{'ERROR'} ) . " $?, $!\n";
+			exit;
+		}
+	}
+}
+
+
+# === Acts like the native mkdirhier command ===
+#
+# If the --no-act option is active then directory creation will be simulated.
+sub MkdirHier($$$$) {
+	my ($dir, $_user, $_OPTIONS, $_STRINGS) = @_;
+	
+	#print "MkdirHier($dir, ...)\n";
+	
+	# Quick check
+	
+	return if (-d $dir);
+	
+	$dir =~ s/\/*$//g;
+	
+	if ( $$_OPTIONS{'no-act'} ) {
+		#print "exists \$\$_user{'FAKE_FILESYSTEM'}{$dir} : ".$$_user{'FAKE_FILESYSTEM'}{$dir}."\n";
+		#print "\$\$_user{'FAKE_FILESYSTEM'}{$dir} : $$_user{'FAKE_FILESYSTEM'}{$dir}\n";
+		return if ( 
+		            ( exists $$_user{'FAKE_FILESYSTEM'}{$dir} ) &&
+		            ( $$_user{'FAKE_FILESYSTEM'}{$dir} eq 'd' )
+		          );
+	}
+	
+	# Construct hierarchy from the bottom up
+	
+	my @dir = File::Spec->splitdir($dir);
+	my @cur_path = ();
+	#print File::Spec->catdir(@dir)."\n";
+	while ( scalar @dir ){
+		push @cur_path, shift @dir;
+		my $cur_path = File::Spec->catdir(@cur_path);
+		
+		my $path_exists = (
+		                    $$_OPTIONS{'no-act'} && 
+		                    ( exists $$_user{'FAKE_FILESYSTEM'}{$cur_path} )
+		                  ) 
+		                ? $$_user{'FAKE_FILESYSTEM'}{$cur_path}
+		                : ( -e $cur_path );
+		
+		my $dir_exists = (
+		                   $$_OPTIONS{'no-act'} && 
+		                   ( exists $$_user{'FAKE_FILESYSTEM'}{$cur_path} )
+		                 ) 
+		               ? ( $$_user{'FAKE_FILESYSTEM'}{$cur_path} eq 'd' )
+		               : ( -d $cur_path );
+		
+		if ( $path_exists && ! $dir_exists ) {
+			print Localize( $STRINGS{'ERROR'} ) . ' ' . Localize( $STRINGS{'path-exists-but-not-a-directory'} ) . " $cur_path\n";
+			exit;
+		}
+		
+		#print "?$cur_path -> $path_exists : $dir_exists\n";
+		
+		if ( ! $dir_exists ) {
+			# Create directory
+			#print Localize( $STRINGS{'MKDIR'} ) . " $cur_path\n";
+			if ($$_OPTIONS{'no-act'}) {
+				$$_user{'FAKE_FILESYSTEM'}{$cur_path} = 'd'; # Fake creation
+			} else {
+				unless ( mkdir $cur_path ) {
+					print STDERR Localize( $$_STRINGS{'ERROR'} ) . " $?, $!\n";
+					exit;
+				}
+			}
+		}
+	}
+}
+
+
+# === Get the device number for a given path ===
+#
+# If the path does not exist then components will be removed off its end until a
+# match is found.  If no match is found (shouldn't happen) then -1 is returned.
+#
+sub GetPathDevice($) {
+	my ($path) = @_;
+	
+	# Try the easy case first
+	if (-e $path) {
+		my ($dev) = lstat( $path );
+		return $dev;
+	}
+	
+	# Try removing components of the tail of the path until a valid path is found
+	
+	my @path = File::Spec->splitdir($path);
+	
+	while (@path) {
+		$path = File::Spec->catdir( @path );
+		if (-e $path) {
+			my ($dev) = lstat( $path );
+			return $dev;
+		}
+		pop @path;
+	}
+	
+	return -1;
+}
+
+
+# === Copy using system's cp command ===
+sub SystemCopy($$$$$) {
+	my ( $src, $dst, $_user, $_OPTIONS, $_STRINGS ) = @_;
+	
+	if ( exists $$_OPTIONS{'_CP'} ) {
+		print Localize( $STRINGS{'COPY'} )  . " $src -> $dst\n";
+		if ($$_OPTIONS{'no-act'}) {
+			$$_user{'FAKE_FILESYSTEM'}{$dst} = $$_user{'FAKE_FILESYSTEM'}{$src}; # Fake copy
+		} else {
+			#print "'" . join( "', '", ( @{$$_OPTIONS{'_CP'}}, $src, $dst ) ) . "'\n";
+			if ( system @{$$_OPTIONS{'_CP'}}, $src, $dst ) {
+				print STDERR Localize( $$_STRINGS{'ERROR'} ) . " $?, $!\n";
+				exit;
+			}
+		}
+		
+	} else {
+		print STDERR Localize( $$_STRINGS{'ERROR'} ) . " " . Localize( $$_STRINGS{'no-native-cp-called'} ) . "\n";
+		exit;
+	}
+}
+
+
+# === Move a file from one directory to another ===
+#
+# Exact behavior varies depending on the options set:
+#
+# • If --preserve is set and file exists then the program will display an 
+#   error message and terminate.
+# • If --overwrite is set then existing files will be silently removed.
+# • If neither option is set then any existing file will be overwritten and a 
+#   message will be displayed.
+#
+# If the --no-act option is active then any move will be simulated.
+sub MoveFile($$$$$) {
+	my ($src, $dst, $_user, $_OPTIONS, $_STRINGS) = @_;
+	
+	# Determine whether the source file exists
+	
+	my $src_exists = (
+	                   $$_OPTIONS{'no-act'} && 
+	                   ( exists $$_user{'FAKE_FILESYSTEM'}{$src} )
+	                 ) 
+	               ? $$_user{'FAKE_FILESYSTEM'}{$src}
+	               : ( -e $src );
+	
+	# Determine whether the destination file exists
+	
+	my $dst_exists = (
+	                   $$_OPTIONS{'no-act'} && 
+	                   ( exists $$_user{'FAKE_FILESYSTEM'}{$dst} )
+	                 ) 
+	               ? $$_user{'FAKE_FILESYSTEM'}{$dst}
+	               : ( -e $dst );
+	
+	print Localize( $STRINGS{'MOVE'} )  . " $src -> $dst\n";
+	
+	my ($dst_vol, $dst_dir, $dst_file)  = File::Spec->splitpath($dst);
+	MkdirHier( $dst_dir, $_user, $_OPTIONS, $_STRINGS );
+	
+	# Determine which physical devices the source and destination are on
+	my $src_dev = GetPathDevice($src);
+	my $dst_dev = GetPathDevice($dst);
+	
+	# Unlink any existing file at destination
+	Unlink($dst, $_user, $_OPTIONS, $_STRINGS);
+	
+	if ( $src_dev != $dst_dev ) {
+		# Cross-device move
+		# Use commandline copy followed by deletion of original
+		
+		#print "Cross-device move\n";
+		
+		# Copy using system's cp command
+		SystemCopy( $src, $dst, $_user, $_OPTIONS, $_STRINGS);
+		
+		# Unlink original
+		# The unlink is always done (--preserve, if present, is ignored)
+		UnlinkAlways($src, $_user, $_OPTIONS, $_STRINGS);
+		
+		
+	} else {
+		# Same-device move
+		
+		# Simple rename using Perl
+		
+		if ($$_OPTIONS{'no-act'}) {
+			$$_user{'FAKE_FILESYSTEM'}{$dst} = $$_user{'FAKE_FILESYSTEM'}{$src}; # Fake copy
+			$$_user{'FAKE_FILESYSTEM'}{$src} = ''; # Fake delete
+		} else {
+			unless ( rename $src, $dst ) {
+				print STDERR Localize( $$_STRINGS{'ERROR'} ) . " $?, $!\n";
+				exit;
+			}
+		}
+		
+	}
+}
+
+
+
+
+
+# ==============================================================================
+# === Utility functions                                                      ===
+# ==============================================================================
+
+
+sub EscapeStringHelper_hex_lc($)   { return sprintf( "\\x%.2x", ord($_[0]) ); }
+sub EscapeStringHelper_hex_UC($)   { return sprintf( "\\x%.2X", ord($_[0]) ); }
+sub EscapeStringHelper_octal($)    { return sprintf( "\\%.3o",   ord($_[0]) ); }
+sub EscapeStringHelper_uri_lc($)   { return sprintf( "%%%.2x",    ord($_[0]) ); }
+sub EscapeStringHelper_uri_UC($)   { return sprintf( "%%%.2X",    ord($_[0]) ); }
+
+sub EscapeString($$) {
+	my ( $string, $encoding ) = @_;
+	
+	if ( $encoding eq 'hex' ) {
+		$string =~ s/([\x00-\x20\x7f-\xff@<>#"&?={}|^~[\]'`\\:+%])/EscapeStringHelper_hex_lc($1)/gse;
+		return $string;
+		
+	} elsif ( $encoding eq 'HEX' ) {
+		$string =~ s/([\x00-\x20\x7f-\xff@<>#"&?={}|^~[\]'`\\:+%])/EscapeStringHelper_hex_UC($1)/gse;
+		return $string;
+		
+	} elsif ( $encoding eq 'octal' ) {
+		$string =~ s/([\x00-\x20\x7f-\xff@<>#"&?={}|^~[\]'`\\:+%])/EscapeStringHelper_octal($1)/gse;
+		return $string;
+		 
+	} elsif ( $encoding eq 'shell' ) {
+		if ( $string =~ s/([\x00-\x20\x7f-\xff@<>#"&?={}|^~[\]'`\\:+%])/EscapeStringHelper_octal($1)/gse ) {
+			return '$\'' . $string . '\'';
+		} else {
+			return $string;
+		}
+		 
+	} elsif ( $encoding eq 'uri' ) {
+		$string =~ s/([\x00-\x20\x7f-\xff@<>#"&?={}|^~[\]'`\\:+%])/EscapeStringHelper_uri_lc($1)/gse;
+		return $string;
+		 
+	} elsif ( $encoding eq 'URI' ) {
+		$string =~ s/([\x00-\x20\x7f-\xff@<>#"&?={}|^~[\]'`\\:+%])/EscapeStringHelper_uri_UC($1)/gse;
+		return $string;
+		 
+	} else {
+		print STDERR Localize( $STRINGS{'INTERNAL-ERROR'} ) . " " . Localize( $STRINGS{'invalid-escape-encoding'} ) . " $encoding\n";
+		exit;
+		
+	}
+}
+
+
+
+
+
+# === Recursively delete a directory ===
+sub RecursivelyDelete($$) {
+	my ($directory, $_OPTIONS) = @_;
+	
+	if ( -l $directory ) {
+		# It's actually a symlink
+		
+		print "unlink $directory\n";
+		unlink "$directory" unless ($OPTIONS{'no-act'});
+		return;
+	}
+		
+	my $DIR;
+	opendir $DIR, $directory;
+	while (my $dentry = readdir $DIR) {
+		next if ($dentry =~ /^\.\.?$/);
+		
+		if (-d "$directory/$dentry") {
+			RecursivelyDelete("$directory/$dentry");
+			rmdir("$directory/$dentry") unless ($OPTIONS{'no-act'});
+			
+		} else {
+			print "unlink $directory/$dentry\n";
+			unlink "$directory/$dentry" unless ($OPTIONS{'no-act'});
+		}
+	}
+	
+	closedir $DIR;
+	print "rmdir $directory\n";
+	rmdir $directory unless ($OPTIONS{'no-act'});
+}
+		
+
+
+
+
+# === Return the current Perl call stack ===
+sub get_stack_trace(;$) {
+	my @stack = ();
+	
+	for ( my $l=0; ; $l++ ) {
+		my ($package, $filename, $line, $subroutine, $hasargs, $wantarray, $evaltext, $is_require, $hints, $bitmask, $hinthash) = caller($l);
+		last unless (defined $package);
+		
+		push @stack, sprintf( "%i: In %s (called from %s:%i)", $l, $subroutine, $filename, $line);
+	}
+	
+	return @stack;
+}
+
+
+
+# ==============================================================================
+# === Core directory processing functions                                    ===
+# ==============================================================================
+
+
+# === Main directory processing function ===
+sub ProcessDir($$$$$) {
+	my ($phase, $object, $_user, $_OPTIONS, $_STRINGS) = @_;
+	print STDERR "ProcessDir($phase, $object, $_user, $_OPTIONS, $_STRINGS)\n"; 
+	LOG( "ProcessDir($phase, $object, $_user, $_OPTIONS, $_STRINGS)\n" ); 
+	
+	#rename "$directory/md5sums", "$directory/.md5sums" if (-e "$directory/md5sums");
+	
+	
+	# *** Find files and subdirctories in current directory (or mininimal set in single-object mode) ***
+	
+	my %extant = ( 'file' => { }, 'directory' => { }, 'link' => { }, 'special' => { } );
+	
+	# Objects in current directory or in current scan (single-object mode)
+	my @objects = ();
+	
+	# Current directory
+	my $directory;
+	
+	# Either 'directory' for directory mode or 'single' for single-object mode
+	my $scan_mode;
+	use constant SCAN_MODE_SINGLE_OBJECT => 0;
+	use constant SCAN_MODE_DIRECTORY     => 1;
+	
+	# Set true if current directory has a .no_md5sums file
+	my $no_scan;
+	
+	my $one_filesystem_mode = $$_OPTIONS{'one-filesystem'};
+	
+	my $directory_device; # For directory mode it is set to the device the directory resides on
+	
+	# Determine mode and create list of objects
+	if ( -d $object ) {
+		# Directory mode
+		
+		#print "Directory mode\n";
+		$scan_mode = 	SCAN_MODE_DIRECTORY;
+		
+		$directory = $object;
+		#print "Directory: $directory\n";
+		
+		# === Determine the device (for use with the --one-filesystem option) ===
+		($directory_device, undef, undef, undef, undef, undef, undef, undef, undef, undef, undef, undef, undef) = stat($directory);
+		
+		
+		# Loop through files in directory and note directories and files...
+		my $DIR;
+		opendir $DIR, $directory;
+		
+		while (my $dentry = readdir $DIR) {
+			next if ($dentry =~ /^\.\.?$/);
+			push @objects, $dentry;
+			#print "Entry:  $dentry\n";
+			
+			$no_scan = 1 if ( $dentry eq '.no_md5sums' );
+		}
+		closedir $DIR;
+		
+	} else {
+		# Single object mode
+		
+		#print "Single-object mode\n";
+		$scan_mode = SCAN_MODE_SINGLE_OBJECT;
+		
+		$directory = dirname( $object );
+		my $object_filename = basename( $object );
+		my $tmp_path;
+		
+		#print "Directory: $directory\n";
+		#print "Filename:  $object_filename\n";
+		
+		# Look for checksums file
+		$tmp_path = File::Spec->catfile( $directory, '.md5sums' );
+		if ( -e $tmp_path ) {
+			push @objects, '.md5sums';
+		}
+		
+		# Look for don't-scan file
+		$tmp_path = File::Spec->catfile( $directory, '.no_md5sums' );
+		if ( -e $tmp_path ) {
+			push @objects, '.no_md5sums';
+			$no_scan = 1;
+		}
+		
+		push @objects, $object_filename;
+	}
+	
+	# Record some basic information about the object currently being scanned
+	$$_OPTIONS{'CUR_SCAN'}{$object} = { 'object' => $object, 'directory' => $directory, 'objects' => \@objects, 'scan_mode' => $scan_mode, 'no_scan' => $no_scan };
+	
+	# Record the current directory (directory mode) or object (single-object mode)
+	$$_OPTIONS{'CUR_OBJECT'} = $object;
+	
+	
+	# *** Directory enter callback ***
+	
+	if ( $phase == 1 ) {
+		if ( defined $$_OPTIONS{'_COMMAND'}{'phase-1-dir-enter'} ) {
+			#print "$$_OPTIONS{'_COMMAND'}{'phase-1-dir-enter'}\n";
+			&{ $$_OPTIONS{'_COMMAND'}{'phase-1-dir-enter'} }( $_user, $object, $_OPTIONS );
+		}
+	} else { # phase 2
+		if ( defined $$_OPTIONS{'_COMMAND'}{'phase-2-dir-enter'} ) {
+			#print "$$_OPTIONS{'_COMMAND'}{'phase-2-dir-enter'}\n";
+			&{ $$_OPTIONS{'_COMMAND'}{'phase-2-dir-enter'} }( $_user, $object, $_OPTIONS );
+		}
+	}
+	
+	
+	if ( $$_OPTIONS{'skip-if-no_md5sums-present'} ) {
+		# === Don't process directry if it has a .no_md5sums file ===
+		if ( $no_scan ) {
+			print STDERR Localize( $$_STRINGS{'has-no-md5sums'} ) . "\n";
+			
+			goto return_from_scan;
+		}
+	}
+	
+	
+	# *** Classify objects ***
+	
+	# Loop through objects list and note directories and files...
+	foreach my $dentry ( @objects ) {
+		#print "entry: $dentry\n";
+		#print Dumper( \%extant ); print "\n\n";
+		
+		my $type;
+		if (-d "$directory/$dentry") {
+			#$extant_dirs{$dentry} = 1;
+			$type = 'directory';
+		} elsif (-f "$directory/$dentry") {
+			#$extant_files{$dentry} = 1;
+			$type = 'file';
+		} else {
+			#$extant_specials{$dentry} = 1;
+			$type = 'special';
+		}
+		
+		# Create a hash entry for the current dentry but have it contain nothing
+		# This will later be set to the object's metatdata
+		$extant{$type}{$dentry} = undef;
+		
+		# Note if the dentry is a symbolic link
+		if ( -l "$directory/$dentry") {
+			$extant{'link'}{$dentry} = 1;
+		}
+		
+		# Also record type in set of all entries for current directory
+		$extant{'ALL'}{$dentry} = $type;
+	}
+	
+	
+	# ****************************************************************************
+	# ***  Checksum objects                                                    ***
+	# ****************************************************************************
+	
+	
+	my $use_checksums = $$_OPTIONS{'use-checksums'};
+	
+	# *** Read checksum file if it exists ***
+	
+	my $version = 0; # 0: not found, otherwise is checksum file version
+	my $old_count = 0; # === Number of previously extant files listed in checksum file ===
+	my %old = ();      # === Previously extant files' Checksum -> File metadata map ===
+	if ( $use_checksums && exists $extant{'file'}{".md5sums"} ) {
+		
+		my $filename = File::Spec->catfile($directory, '.md5sums');
+		#print "Using checksum file $filename\n";
+		open SUM, "<", $filename or die "Fatal: $! while opening \"".$filename."\"\n";
+		
+		my $first_line = undef;
+		#my $version = 1;
+		
+		while (my $line = <SUM>) {
+			chomp $line;
+			
+			# === Check for version number on first line ===
+			unless (defined $first_line) {
+				$first_line = $line;
+				if ($line =~ /^v(\d+(\.\d+)?)$/) {
+					$version = $1;
+					next;
+				}
+			}
+			
+			next if ($line =~ /^md5sum: .+: Is a directory$/); # may be found in older checksum files
+			
+			if ($version == 2	) {
+				#if ($line =~ /^\t(\d+)\t(\d+)\t(.+?\/)?([^\/]+)$/) {
+				if ($line =~ /^([0-9a-fA-F]{32})\t(\d+)\t(\d+)\t(.+)$/) {
+					#my ($md5, $mtime, $size, $path, $name) = ($1, $2, $3, $4, $5);
+					my ($md5, $mtime, $size, $name) = ($1, $2, $3, $4, $5);
+					my $cooked_name = $name;
+					$cooked_name =~ s/\\(.)/\1/g;
+					$old{$cooked_name} = { md5=>$md5, mtime=>$mtime, size=>$size, path=>$directory, name=>$name, line=>$line};
+					LOG( "v2:\t\$old{$cooked_name} = { md5=>$md5, mtime=>$mtime, size=>$size, path=>$directory, name=>$name, line=>$line};\n" );
+					#print "$line\n";
+					#print "v2:\t\$old{$cooked_name} = { md5=>$md5, mtime=>$mtime, size=>$size, path=>$directory, name=>$name, line=>$line};\n";
+					$old_count++;
+				}
+				
+			} elsif ($version == 1) {
+				if ($line =~ /^(\S+) (.+?\/)?([^\/]+)$/) {
+					my ($md5, $path, $name) = ($1, $2, $3);
+					my $cooked_name = $name;
+					$cooked_name =~ s/\\(.)/\1/g;
+					$old{$cooked_name} = { md5=>$md5, path=>$directory, name=>$name, line=>$line};
+					LOG( "v1: \$old{$cooked_name} = { md5=>$md5, path=>$directory, name=>$name, line=>$line};\n" );
+					
+					$old_count++;
+				}
+			}
+		}
+		close SUM;
+	}
+	
+	my $never_rewrite_checksums = $$_OPTIONS{'never-rewrite-checksums'};
+	my $force_rewrite = 0; # === Set true to force rewrite of checksum file ===
+	if ($version < $CURRENT_VERSION) {
+		# === .md5sums was generated by an earlier version of this program ===
+		$force_rewrite = 1;
+	}
+	
+	#print Dumper( $_OPTIONS );
+	
+	# *** Loop through objects to check ***
+	my $new_count = 0;     # === Number of currently extant files found in checksum file ===
+	my %md5sums = ();      # === Data for new checksum file ===
+	
+	my $compute_missing   = $$_OPTIONS{'compute-missing'};
+	my $discard_existing  = $$_OPTIONS{'discard-existing'};
+	
+	my $compute_always    =      $compute_missing    &&      $discard_existing   ;  # Compute always
+	my $discard_checksums =  ( ! $compute_missing )  &&      $discard_existing   ;  # Always discard
+#	my $compute_missing   =      $compute_missing    &&  ( ! $discard_existing ) ;  # Compute if missing otherwise use existing
+	my $use_existing      =  ( ! $compute_missing )  &&  ( ! $discard_existing ) ;  # Use existing, only recompute if changed
+	
+	foreach my $name (sort keys %{$extant{'ALL'}}) {
+		next if ($ignore{$name});
+		
+		# === START Gather metadata ===
+		
+		my $filepath = "$directory/$name";
+		LOG( "Checking $filepath\n" );
+		#print "Checking $filepath\n";
+		
+		# === Get file's current modify time and size ===
+		my ($stat_dev, $stat_ino, $stat_mtime, $stat_size) = StatFile($filepath);
+		LOG( "stat: (                                      dev:$stat_dev, ino:$stat_ino, mtime:$stat_mtime, size:$stat_size)\n" );
+		
+		my %metadata;
+		
+		if ( $use_checksums == 0 ) {
+			# === Don't use checksums ===
+			
+			%metadata = ( mtime=>$stat_mtime, size=>$stat_size, path=>$directory, name=>$name, type=>$extant{'ALL'}{$name}, is_link=>$extant{'link'}{$name}, dev=>$stat_dev, ino=>$stat_ino );
+			
+		} else {
+			# === Use checksums ===
+			
+			LOG( "old:  (md5:$old{$name}{md5}, mtime:$old{$name}{mtime}, size:$old{$name}{size})\n" );
+			
+			$new_count++ if (defined $old{$name});
+			
+			if ( ! exists $extant{'file'}{$name} ) {
+				# *** Mot a regular file ***
+				LOG( "*** Not a regular file ***\n" );
+			
+				%metadata = ( mtime=>$stat_mtime, size=>$stat_size, path=>$directory, name=>$name, type=>$extant{'ALL'}{$name}, is_link=>$extant{'link'}{$name}, dev=>$stat_dev, ino=>$stat_ino );
+				
+			} elsif ( $discard_checksums ) {
+				# *** Always discard checksums ***
+				LOG( "*** Discarding checksums ***\n" );
+				
+				# Checksum discard requested so, null out the checksum
+				%metadata = ( md5=>undef, mtime=>$stat_mtime, size=>$stat_size, path=>$directory, name=>$name, type=>$extant{'ALL'}{$name}, is_link=>$extant{'link'}{$name}, dev=>$stat_dev, ino=>$stat_ino );
+				
+				$force_rewrite = 1;
+				unless ( $never_rewrite_checksums ) {
+					ClearXA($filepath, $_OPTIONS );
+				}
+				
+			} else {
+				# *** Normal case ***
+				
+				# === Look for checksum in file's extended attributes ===
+				my ($xa_md5, $xa_md5_mtime, $xa_md5_size) = GetXA($filepath, $_OPTIONS);
+				LOG( "XA:   (md5:$xa_md5, mtime:$xa_md5_mtime, size:$xa_md5_size)\n" );
+				
+				# === File's computed MD5 checksum ===
+				my $md5 = undef;
+				
+				# === Determine old MD5, mtime, and size ===
+				
+				my ($old_md5, $old_mtime, $old_size, $old_source) = ( undef, undef, undef, 'missing' );
+				my $old_metadata_missing;
+				
+				if ( (defined $xa_md5) && (defined $xa_md5_mtime) && (defined $xa_md5_size) ) {
+					# === MD5, date, and size in extended attributes ===
+					LOG( "=== MD5, date, and size in extended attributes ===\n" );
+					( $old_md5, $old_mtime, $old_size, $old_source ) = ( $xa_md5, $xa_md5_mtime, $xa_md5_size, 'attributes' );
+					$old_metadata_missing = 0;
+					
+				} elsif ( (defined $old{$name}{md5}) && (defined $old{$name}{mtime}) && (defined $old{$name}{size}) ) {
+					# === MD5, date, and size in md5sums ===
+					LOG( "=== MD5, date, and size in md5sums ===\n" );
+					( $old_md5, $old_mtime, $old_size, $old_source ) = ( $old{$name}{md5}, $old{$name}{mtime}, $old{$name}{size}, 'md5sums' );
+					$old_metadata_missing = 0;
+					
+				} elsif (defined $xa_md5) {
+					# === MD5 in extended attributes ===
+					LOG( "=== MD5 in extended attributes ===\n");
+					( $old_md5, $old_mtime, $old_size, $old_source ) = ( $xa_md5, undef, undef, 'attributes' );
+					$old_metadata_missing = 1;
+					
+				} elsif (defined $old{$name}{md5}) {
+					# === MD5 in md5sums ===
+					LOG( "*** MD5 in md5sums ***\n" );
+					( $old_md5, $old_mtime, $old_size, $old_source ) = ( $old{$name}{md5}, undef, undef, 'md5sums' );
+					$old_metadata_missing = 1;
+					
+				} else {
+					$old_metadata_missing = 1;
+				}
+				
+				# === Recompute checksums if needed ===
+				if ( 
+				       $compute_always || 
+				     ( $compute_missing && $old_metadata_missing )
+#				       $old_metadata_missing ||
+#				     ( $stat_mtime != $old_mtime ) || 
+#				     ( $stat_size != $old_size ) 
+				   ) {
+					$md5 = ComputeMD5($filepath);
+					%metadata = ( md5=>$md5,      mtime=>$stat_mtime, size=>$stat_size, source=>'computed',  old_md5=>$old_md5,  old_md5_mtime=>$old_mtime,  old_md5_size=>$old_size,  md5_mtime=>$stat_mtime, md5_size=>$stat_size, path=>$directory, name=>$name, type=>$extant{'ALL'}{$name}, is_link=>$extant{'link'}{$name}, dev=>$stat_dev, ino=>$stat_ino );
+					$force_rewrite = 1;
+					unless ( $never_rewrite_checksums ) {
+						WriteXA($filepath, \%metadata, $_OPTIONS );
+					}
+				} else {
+					# Use existing metadata
+					%metadata = ( md5=>$old_md5,  mtime=>$stat_mtime, size=>$stat_size, source=>$old_source, md5_mtime=>$old_mtime,  md5_size=>$old_size,  path=>$directory, name=>$name, type=>$extant{'ALL'}{$name}, is_link=>$extant{'link'}{$name}, dev=>$stat_dev, ino=>$stat_ino );
+				}
+				
+				AddToChecksumFile(\%md5sums, { %metadata } );
+				
+			} # === END - Normal case ===
+			
+		} # === END - Use checksums ===
+		
+		# === Record file's metadata ===
+		
+		# Store by name
+		$extant{ $extant{'ALL'}{$name} }{$name} = \%metadata;
+		
+		# === END - Gather metadata ===
+		
+		
+		LOG( "\n" );
+		
+		
+		if ( $phase == 1 ) {
+			if ( defined $$_OPTIONS{'_COMMAND'}{'phase-1-per-object'} ) {
+				#print "$$_OPTIONS{'_COMMAND'}{'phase-1-per-object'}\n";
+				#&{ $$_OPTIONS{'_COMMAND'}{'phase-1-per-object'} }( $_user, $directory, $name, \%metadata, $_OPTIONS );
+				&{ $$_OPTIONS{'_COMMAND'}{'phase-1-per-object'} }( $_user, $directory, $name, $extant{ $extant{'ALL'}{$name} }{$name}, $_OPTIONS );
+			}
+		} else { # phase 2
+			if ( defined $$_OPTIONS{'_COMMAND'}{'phase-2-per-object'} ) {
+				#print "$$_OPTIONS{'_COMMAND'}{'phase-2-per-object'}\n";
+				#&{ $$_OPTIONS{'_COMMAND'}{'phase-2-per-object'} }( $_user, $directory, $name, \%metadata, $_OPTIONS );
+				&{ $$_OPTIONS{'_COMMAND'}{'phase-2-per-object'} }( $_user, $directory, $name, $extant{ $extant{'ALL'}{$name} }{$name}, $_OPTIONS );
+			}
+		}
+		
+	} # === END Loop through files ===
+	
+	
+	# *** Only write checksum file if needed ***
+	if (
+	     ( ! $never_rewrite_checksums ) &&
+	     (
+	       (
+	         ( $scan_mode == SCAN_MODE_DIRECTORY ) && 
+	         ( $old_count != $new_count ) 
+	       )
+	       || $force_rewrite 
+	     )
+	   ) {
+		WriteChecksumFile($directory, \%md5sums);
+	}
+	
+		
+	# *** Process current directory's subdirectories ***
+	if ( ( $scan_mode == SCAN_MODE_DIRECTORY ) && ( $$_OPTIONS{recurse} ) ) {
+		#foreach my $subdirectory (sort keys %extant_dirs) {
+		foreach my $subdirectory (sort keys %{$extant{'directory'}}) {
+			# Skip subdirectories that are actually symlinks to directories
+			next if ( defined $extant{'link'}{$subdirectory} );
+			
+			if ( $one_filesystem_mode ) {
+				if ( $extant{'directory'}{$subdirectory}{'dev'} != $directory_device ) {
+					print STDERR Localize( $STRINGS{'NOTE'} ) . " " . Localize( $STRINGS{'is-a-mount-point'} ) . File::Spec->catdir($directory, $subdirectory) . "\n";
+					next;
+				}
+			}
+			
+			my $returned = ProcessDir($phase, File::Spec->catdir($directory, $subdirectory), $_user, $_OPTIONS, $_STRINGS);
+			
+			# Restore the current directory
+			$$_OPTIONS{'CUR_OBJECT'} = $directory;
+			
+			if ( $phase == 1 ) {
+				if ( defined $$_OPTIONS{'_COMMAND'}{'phase-1-per-subdirectory'} ) {
+					#print "$$_OPTIONS{'_COMMAND'}{'phase-1-per-subdirectory'}\n";
+					&{ $$_OPTIONS{'_COMMAND'}{'phase-1-per-subdirectory'} }( $_user, $directory, $subdirectory, $returned, \%extant, $_OPTIONS );
+				}
+			} else { # phase 2
+				if ( defined $$_OPTIONS{'_COMMAND'}{'phase-2-per-subdirectory'} ) {
+					#print "$$_OPTIONS{'_COMMAND'}{'phase-2-per-subdirectory'}\n";
+					&{ $$_OPTIONS{'_COMMAND'}{'phase-2-per-subdirectory'} }( $_user, $directory, $subdirectory, $returned, \%extant, $_OPTIONS );
+				}
+			}
+		}
+	}
+	
+	#print Dumper( \%extant );
+	
+	# *** Return checksums and metadata ***
+	
+return_from_scan:
+	
+	# Return value
+	my $return = undef;
+	
+	if ( $phase == 1 ) {
+		if ( defined $$_OPTIONS{'_COMMAND'}{'phase-1-dir-leave'} ) {
+			#print "$$_OPTIONS{'_COMMAND'}{'phase-1-dir-leave'}\n";
+			$return = &{ $$_OPTIONS{'_COMMAND'}{'phase-1-dir-leave'} }( $_user, $directory, $_OPTIONS );
+		}
+	} else { # phase 2
+		if ( defined $$_OPTIONS{'_COMMAND'}{'phase-2-dir-leave'} ) {
+			#print "$$_OPTIONS{'_COMMAND'}{'phase-2-dir-leave'}\n";
+			$return = &{ $$_OPTIONS{'_COMMAND'}{'phase-2-dir-leave'} }( $_user, $directory, $_OPTIONS );
+		}
+	}
+	
+	# Clean up
+	delete $$_OPTIONS{'CUR_SCAN'}{$object};
+	
+	return $return;
+}

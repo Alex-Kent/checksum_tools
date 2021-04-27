@@ -1,0 +1,227 @@
+.pc
+
+.TH LINK_DUPES 1 "2021-04-27" "1.0.0" "Checksum tools"
+.SH NAME
+link_dupes \- Replace duplicate files with links
+
+.SH SYNOPSIS
+
+.B link_dupes 
+.I objects reference_directory 
+[ 
+.I options 
+]
+.br
+.B link_dupes 
+.I directory 
+[
+.I options 
+]
+
+.I objects
+:= ( 
+.I file
+| 
+.I directory
+) [ \&... ]
+
+.SH OVERVIEW
+
+Replace any files in \fIobjects\fR that exist in \fIreference_directory\fR with links to the latter.
+When called with a single directory then any duplicate files in the directory are linked to one of the copies.
+
+.SH NOTES
+Hard links will be used whenever possible; if this cannot be done (e.g. cross-device links) then symbolic links will be used.
+When symbolic links are used, relative links are used if the file being pointed by the link to has a relative path and absolute links are used if the file being pointed to has an absolute path.
+The the \fB--link-absolute\fR option can be used to force the use of absolute links and \fB--link-relative\fR can be used to force use of relative links.
+
+The \fBsymlink_dupes\fR command behaves similar to this one except that it always uses symbolic links (not hard links).
+
+Checksums will be computed and stored for all files that are missing them.
+
+.SH OPTIONS
+
+.SS "Main options"
+
+.TP
+.B \-A\fR, \fB\-\-no\-act
+Do not delete or move any files (\f(CW.md5sums\fR and extended attribute metadata may be updated)
+
+.TP
+.B \-b\fR, \fB\-\-built\-in\-copy
+Use a built\-in function to copy files (instead of using e.g. \f(CWcp\ \-ap\fR); this is also used when copying files or moving files across devices.
+
+(not currently implemented)
+
+.TP
+.B \-d\fR, \fB\-\-discard\-existing
+Discard existing checksums and recompute them
+
+.TP
+.B \-l\fR, \fB\-\-link\-relative
+When symlinking always use relative links
+
+.TP
+.B \-L\fR, \fB\-\-link\-absolute
+When symlinking always use absolute links
+
+.TP
+.B \-m\fR \fIdir\fR, \fB\-\-move\-dupes \fIdir\fR
+Move duplicate files into the directory 
+.I dir\fR.
+
+These can later be restored to the original locations using 
+.B restore_to_xa_location\fR.
+
+.TP
+.B \-n\fR, \fB\-\-same\-name
+For a file to match it must have same filename (case-insensitive) as well as the same fingerprint.
+
+At some point a 
+.B\-\-case\-insensitive 
+option may be added; if this is done, the 
+.B\-\-same\-name 
+option will be case-sensitive unless case-insensitivity is explicitly requested.
+
+.TP
+.B \-O\fR, \fB\-\-overwrite
+Allow overwriting of existing files
+
+.TP
+.B \-P\fR, \fB\-\-preserve
+Never overwrite existing files
+
+Attempting to overwrite an exising file will display a warning to \f(CWSTDERR\fR then continue.
+
+.TP
+.B \-r\fR, \fB\-\-recurse
+Recurse into subdirectories (default)
+
+.TP
+.B \-R\fR, \fB\-\-no\-recurse
+Do not recurse into subdirectories
+
+.TP
+.B \-x\fR, \fB\-\-one\-filesystem
+Don't cross filesystem boundaries while recursing
+
+.SS "Core options"
+The following options can be used with any command in the 
+.B checksum_tools 
+suite:
+
+.TP
+.B \-h\fR, \fB\-\-help
+Show brief usage message
+
+.TP
+.B \-H\fR, \fB\-\-help\-all
+Show detailed usage message
+
+.TP
+.B \-\-help\-core
+Show options supported by all commands
+
+.TP
+.B \-A\fR, \fB\-\-no\-act
+Do not delete or move any files (\f(CW.md5sums\fR and extended attribute metadata may be updated)
+
+.TP
+.B \-b\fR, \fB\-\-built\-in\-copy
+Use a built-in function to copy files (instead of using e.g. \fBcp \-ap\fR); this is also used when copying files or moving files across devices.
+
+(not currently implemented)
+
+.TP
+.B \-c\fR, \fB\-\-compute\-missing
+Compute and store MD5 checksums when not present
+
+(default)
+
+.TP
+.B \-\-no\-compute\-missing
+Don't compute or store missing MD5 checksums
+
+.TP
+.B \-d\fR, \fB\-\-discard\-existing
+Discard existing checksums and recompute them
+
+.TP
+.B \-E\fR, \fB\-\-ignore\-symlinks
+Directories holding only symlinks or subdirectories (no regular files) are considered empty.
+
+.TP
+.B \-n\fR, \fB\-\-same\-name
+For a file to match it must have same filename (case-insensitive) as well as the same fingerprint.
+
+At some point a \f(CW--case-insensitive\fR option may be added; if this is done, the \f(CW--same-name\fR option will be case-sensitive unless case-insensitivity is explicitly requested.
+
+.TP
+.B \-O\fR, \fB\-\-overwrite
+Allow overwriting of existing files
+
+.TP
+.B \-P\fR, \fB\-\-preserve
+Never overwrite existing files
+
+Attempting to overwrite an exising file will display a warning to \f(CWSTDERR\fR then continue.
+
+.TP
+.B \-r\fR, \fB\-\-recurse
+Recurse into subdirectories (default)
+
+.TP
+.B \-R\fR, \fB\-\-no\-recurse
+Do not recurse into subdirectories
+
+.TP
+.B \-x\fR, \fB\-\-one\-filesystem
+Don't cross filesystem boundaries while recursing
+
+.TP
+.B \-\-never\-rewrite\-checksums
+If set then neither extended attributes nor the \f(CW.md5sums\fR files will be written to under any circumstances.
+
+.SH AUTHOR
+
+.B checksums_tools
+is written by Alexander Hajnal.
+
+The latest version can be downloaded from 
+.IP
+https://github.com/Alex-Kent/checksum_tools/
+.PP
+Any problems can be reported to the issue tracker at 
+.IP
+https://github.com/Alex-Kent/checksum_tools/issues
+.PP
+
+.SH "SEE ALSO"
+.BR checksum_tool (1), 
+.BR clear_checksums (1),
+.BR cull_dupes (1),
+.BR find_dupes (1),
+.BR find_orphans (1),
+.BR get_metadata (1),
+.BR prune_dirs (1),
+.BR restore_to_xa_location (1),
+.BR symlink_dupes (1),
+.BR update_checksums (1),
+.BR verify_checksums (1)
+
+Usage examples can be found in 
+.BR checksum_tool (1)
+\.
+
+.BR /usr/local/share/checksum_tools/README.md
+provides a full description of how to use the software.
+
+.SH LICENSE
+
+checksum_tools \(co 2021 Alexander Hajnal
+
+This software is licensed under version 3 of the GNU Affero General Public License.  See the 
+.B LICENSE
+file (included with this software) to view the full text of the license.
+
+

@@ -1,0 +1,220 @@
+.pc
+
+.TH GET_METADATA 1 "2021-04-27" "1.0.0" "Checksum tools"
+.SH NAME
+get_metadata \- Display file metadata
+
+.SH SYNOPSIS
+
+.B get_metadata
+( 
+.I file
+|
+.I directory
+) [ \&... ] [
+.I options
+]
+
+.SH OVERVIEW
+
+Display file metadata (standard and extended attributes).
+One use for this is making a backup copy of the files' attributes.
+Note that there is currently no way to explicitly set file metadata using \fBchecksum_tools\fR.
+
+.SH OUTPUT
+Metadata for all files is written to \f(CWSTDOUT\fR (one file per line).
+Metadata is reported as key/value pairs (\f(CIkey\f(CW:\f(CIvalue\fR) with a single tab between each pair.
+If an attribute is not present for a file (e.g. \fBjpeg.md5\fR for a text file) then the attribute is not listed (i.e. attributes do not have \f(CWNULL\fR values). 
+The following attributes may be reported:
+
+.TS
+lw12 lw15.
+\fBpath\fR	\fRCurrent path (either relative or absolute)
+\fBname\fR	\fRName
+\fBtype\fR	\fROne of: \f(CWdir\fR \f(CWfile\fR \f(CWlink\fR \f(CWblock\fR \fBchar\fR \f(CWfifo\fR \f(CWsocket\fR
+\fBmode\fR	\fRMode bits (4-digit octal)
+\fBuser\fR	\fROwner: \f(CW\f(CInumber\f(CR (\f(CIname\f(CR)\f(CR
+\fBgroup\fR	\fRGroup: \f(CW\f(CInumber\f(CR (\f(CIname\f(CR)\f(CR
+\fBsize\fR	\fRSize (only for files)
+\fBmtime\fR	\fRModification time (UNIX timestamp)
+\fBtarget\fR	\fRSymlink's target
+\fBdevice\fR	\fRDevice major and minor values: \f(CW\f(CIminor\f(CB,\f(CIminor\fR
+\fBoriginal\fR	\fROriginal location (path and filename)
+\fBmd5\fR	\fRMD5 checksum of entire file
+\fBmd5.mtime\fR	\fRFile's mtime when MD5 checksum was computed
+\fBmd5.size\fR	\fRFile's size when MD5 checksum was computed
+\fBmd5.valid\fR	\fRWhether stored file checksum is probably accurate (\f(CWyes\fR or \f(CWno\fR).
+\fBmd5.source\fR	\fRSource of checksum data (either \f(CWattributes\fR or \f(CWmd5sums\fR)
+.TE
+
+Extended attributes are also reported as \fBxa.\f(BInamespace\fB.\f(BIname\fR. On platforms that don't support extended attribute namespaces all attributes appear under the \fBuser\fR namespace (e.g. \fBxa.user.\f(BIname\fR).
+
+Of interest is \fBxa.user.jpeg.md5\fR (\fBxa.jpeg.md5\fR on some platforms) which, for JPEG files is the MD5 checksum of file's JPEG data (as computed by \fBjpeg_checksum_tools\fR).
+
+.SH NOTES
+Missing file checksums will be computed unless the \fB\-\-no\-compute\-missing\fR option is specified.
+
+.SH OPTIONS
+
+.SS "Main options"
+
+.TP
+.B \-c\fR, \fB\-\-compute\-missing
+Compute and store MD5 checksums when not present (default)
+
+.TP
+.B \-\-no\-compute\-missing
+Don't compute or store missing MD5 checksums
+
+.TP
+.B \-d\fR, \fB\-\-discard\-existing
+Discard existing checksums and recompute them
+
+.TP
+.B \-r\fR, \fB\-\-recurse
+Recurse into subdirectories (default)
+
+.TP
+.B \-R\fR, \fB\-\-no\-recurse
+Do not recurse into subdirectories
+
+.TP
+.B \-x\fR, \fB\-\-one\-filesystem
+Don't cross filesystem boundaries while recursing
+
+.TP
+.B \-\-escape\-filenames=\fImode
+
+Escape special characters in file and directory names.
+
+.I mode 
+can be \f(CWoctal\fR, \f(CWhex\fR, \f(CWHEX\fR, \f(CWshell\fR, \f(CWuri\fR, or \f(CWURI\fR.
+
+In \f(CWshell\fR mode strings with special characters will have them octal encoded and wrapped so as to be suitable for direct shell usage (i.e. \f(CWESCAPED\fR becomes \f(CW$'ESCAPED'\fR).
+
+In both URI modes strings with special characters will have them hex encoded in a format suitable for usage in a URI (i.e. as \f(CW%XX\fR where \f(CWX\fR is a hex digit).
+
+Lowercase hex digits are output in \f(CWhex\fR and \f(CWuri\fR modes.
+
+Uppercase hex digits are output in \f(CWHEX\fR and \f(CWURI\fR modes. 
+
+.SS "Core options"
+The following options can be used with any command in the 
+.B checksum_tools 
+suite:
+
+.TP
+.B \-h\fR, \fB\-\-help
+Show brief usage message
+
+.TP
+.B \-H\fR, \fB\-\-help\-all
+Show detailed usage message
+
+.TP
+.B \-\-help\-core
+Show options supported by all commands
+
+.TP
+.B \-A\fR, \fB\-\-no\-act
+Do not delete or move any files (\f(CW.md5sums\fR and extended attribute metadata may be updated)
+
+.TP
+.B \-b\fR, \fB\-\-built\-in\-copy
+Use a built-in function to copy files (instead of using e.g. \fBcp \-ap\fR); this is also used when copying files or moving files across devices.
+
+(not currently implemented)
+
+.TP
+.B \-c\fR, \fB\-\-compute\-missing
+Compute and store MD5 checksums when not present
+
+(default)
+
+.TP
+.B \-\-no\-compute\-missing
+Don't compute or store missing MD5 checksums
+
+.TP
+.B \-d\fR, \fB\-\-discard\-existing
+Discard existing checksums and recompute them
+
+.TP
+.B \-E\fR, \fB\-\-ignore\-symlinks
+Directories holding only symlinks or subdirectories (no regular files) are considered empty.
+
+.TP
+.B \-n\fR, \fB\-\-same\-name
+For a file to match it must have same filename (case-insensitive) as well as the same fingerprint.
+
+At some point a \f(CW--case-insensitive\fR option may be added; if this is done, the \f(CW--same-name\fR option will be case-sensitive unless case-insensitivity is explicitly requested.
+
+.TP
+.B \-O\fR, \fB\-\-overwrite
+Allow overwriting of existing files
+
+.TP
+.B \-P\fR, \fB\-\-preserve
+Never overwrite existing files
+
+Attempting to overwrite an exising file will display a warning to \f(CWSTDERR\fR then continue.
+
+.TP
+.B \-r\fR, \fB\-\-recurse
+Recurse into subdirectories (default)
+
+.TP
+.B \-R\fR, \fB\-\-no\-recurse
+Do not recurse into subdirectories
+
+.TP
+.B \-x\fR, \fB\-\-one\-filesystem
+Don't cross filesystem boundaries while recursing
+
+.TP
+.B \-\-never\-rewrite\-checksums
+If set then neither extended attributes nor the \f(CW.md5sums\fR files will be written to under any circumstances.
+
+.SH AUTHOR
+
+.B checksums_tools
+is written by Alexander Hajnal.
+
+The latest version can be downloaded from 
+.IP
+https://github.com/Alex-Kent/checksum_tools/
+.PP
+Any problems can be reported to the issue tracker at 
+.IP
+https://github.com/Alex-Kent/checksum_tools/issues
+.PP
+
+.SH "SEE ALSO"
+.BR checksum_tool (1), 
+.BR clear_checksums (1),
+.BR cull_dupes (1),
+.BR find_dupes (1),
+.BR find_orphans (1),
+.BR link_dupes (1),
+.BR prune_dirs (1),
+.BR restore_to_xa_location (1),
+.BR symlink_dupes (1),
+.BR update_checksums (1),
+.BR verify_checksums (1)
+
+Usage examples can be found in 
+.BR checksum_tool (1)
+\.
+
+.BR /usr/local/share/checksum_tools/README.md
+provides a full description of how to use the software.
+
+.SH LICENSE
+
+checksum_tools \(co 2021 Alexander Hajnal
+
+This software is licensed under version 3 of the GNU Affero General Public License.  See the 
+.B LICENSE
+file (included with this software) to view the full text of the license.
+
+

@@ -1,0 +1,351 @@
+.pc
+
+.TH CHECKSUM_TOOL 1 "2021-04-27" "1.0.0" "Checksum tools"
+.SH NAME
+checksum_tool \- Checksum tools suite
+
+.SH SYNOPSIS
+
+.B checksum_tool
+.I mode
+.I objects
+[
+.I options
+]
+
+.I objects
+:= ( 
+.I file
+| 
+.I directory
+) [ \&... ]
+
+.SH OVERVIEW
+
+Checksum tools is a collection of programs that can be used to:
+
+.in 1.0i
+\(bu Verify the integrity of files.
+.br
+\(bu Find and/or remove duplicate files.
+.br
+\(bu Find files that differ between two directories (or that only exist in one).
+.br
+\(bu Move files across devices while ensuring their integrity.
+.in 0
+
+.SH MODES
+
+\fBchecksum_tool\fR can run in a number of modes:
+
+.TP
+.B \-C\fR, \fB\-\-cull\-dupes
+Delete duplicate files (for safety, \fB-C\fR is uppercase)
+
+.TP
+.B \-f\fR, \fB\-\-find\-dupes
+Display duplicate files
+
+.TP
+.B \-F\fR, \fB\-\-find\-orphans
+Display orphan files
+
+.TP
+.B \-g\fR, \fB\-\-get\-metadata
+Display file metadata
+
+.TP
+.B \-p\fR, \fB\-\-prune\-dirs
+Recursively delete empty directories
+
+.TP
+.B \-s\fR, \fB\-\-symlink\-dupes
+Replace duplicates files with symlinks
+
+.TP
+.B \-S\fR, \fB\-\-link\-dupes
+Replace duplicates files with hard links (when possible) otherwise replace them with symlinks
+
+.TP
+.B \-u\fR, \fB\-\-update\-checksums
+Update checksums for modified files and for files
+
+.TP
+.B \-U\fR, \fB\-\-restore
+Restore moved files to their original locations
+
+.TP
+.B \-V\fR, \fB\-\-verify
+Verify that files match their checksums
+
+.TP
+.B \-X\fR, \fB\-\-clear\-checksums
+Clear computed checksums
+
+.P
+Calling this command with a different name changes its behavior:
+
+.in 1.0i
+.TS
+lw20 lw10.
+\fBCommand name	\fBEquivalent command
+_
+\fBclear_checksums	\fBchecksum_tool -X
+\fBcull_dupes	\fBchecksum_tool -C
+\fBfind_dupes	\fBchecksum_tool -f
+\fBfind_orphans	\fBchecksum_tool -F
+\fBget_metadata	\fBchecksum_tool -g
+\fBlink_dupes	\fBchecksum_tool -S
+\fBprune_dirs	\fBchecksum_tool -p
+\fBrestore_to_xa_location\ \ \ \ 	\fBchecksum_tool -U
+\fBsymlink_dupes	\fBchecksum_tool -s
+\fBupdate_checksums	\fBchecksum_tool -u
+\fBverify_checksums	\fBchecksum_tool -V
+.TE
+.in 0
+
+
+
+.SH "OPTIONS"
+
+.TP
+.B \-h\fR, \fB\-\-help
+Show brief usage message
+
+.TP
+.B \-H\fR, \fB\-\-help\-all
+Show detailed usage message
+
+.TP
+.B \-a\fR, \fB\-\-all\-or\-nothing
+Only act if the entire object would be affected.
+
+For example, running \fBprune_dirs\fR on an object with this option active will only perform deletions if the entire object would be deleted.
+
+.TP
+.B \-A\fR, \fB\-\-no\-act
+Do not delete or move any files (\f(CW.md5sums\fR and extended attribute metadata may be updated)
+
+.TP
+.B \-b\fR, \fB\-\-built\-in\-copy
+Use a built-in function to copy files (instead of using e.g. \fBcp \-ap\fR); this is also used when copying files or moving files across devices.
+
+(not currently implemented)
+
+.TP
+.B \-c\fR, \fB\-\-compute\-missing
+Compute and store MD5 checksums when not present
+
+(default)
+
+.TP
+.B \-\-no\-compute\-missing
+Don't compute or store missing MD5 checksums
+
+.TP
+.B \-d\fR, \fB\-\-discard\-existing
+Discard existing checksums and recompute them
+
+.TP
+.B \-E\fR, \fB\-\-ignore\-symlinks
+Directories holding only symlinks or subdirectories (no regular files) are considered empty.
+
+.TP
+.B \-m\fR \fIdir\fR, \fB\-\-move\-dupes \fIdir\fR
+Move duplicate files into the directory 
+.I dir\fR.
+
+These can later be restored to the original locations using 
+.B restore_to_xa_location\fR.
+
+.TP
+.B \-n\fR, \fB\-\-same\-name
+For a file to match it must have same filename (case-insensitive) as well as the same fingerprint.
+
+At some point a \f(CW--case-insensitive\fR option may be added; if this is done, the \f(CW--same-name\fR option will be case-sensitive unless case-insensitivity is explicitly requested.
+
+.TP
+.B \-N\fR, \fB\-\-long-names
+Also show full path when displaying duplicates
+
+.TP
+.B \-O\fR, \fB\-\-overwrite
+Allow overwriting of existing files
+
+.TP
+.B \-P\fR, \fB\-\-preserve
+Never overwrite existing files
+
+Attempting to overwrite an exising file will display a warning to \f(CWSTDERR\fR then continue.
+
+.TP
+.B \-r\fR, \fB\-\-recurse
+Recurse into subdirectories (default)
+
+.TP
+.B \-R\fR, \fB\-\-no\-recurse
+Do not recurse into subdirectories
+
+.TP
+.B \-x\fR, \fB\-\-one\-filesystem
+Don't cross filesystem boundaries while recursing
+
+.TP
+.B \-\-escape\-filenames=\fImode
+
+Escape special characters in file and directory names.
+
+.I mode 
+can be \f(CWoctal\fR, \f(CWhex\fR, \f(CWHEX\fR, \f(CWshell\fR, \f(CWuri\fR, or \f(CWURI\fR.
+
+In \f(CWshell\fR mode strings with special characters will have them octal encoded and wrapped so as to be suitable for direct shell usage (i.e. \f(CWESCAPED\fR becomes \f(CW$'ESCAPED'\fR).
+
+In both URI modes strings with special characters will have them hex encoded in a format suitable for usage in a URI (i.e. as \f(CW%XX\fR where \f(CWX\fR is a hex digit).
+
+Lowercase hex digits are output in \f(CWhex\fR and \f(CWuri\fR modes.
+
+Uppercase hex digits are output in \f(CWHEX\fR and \f(CWURI\fR modes. 
+
+.TP
+.B \-\-never\-rewrite\-checksums
+If set then neither extended attributes nor the \f(CW.md5sums\fR files will be written to under any circumstances.
+
+.SH EXAMPLES
+
+Here are a few examples of what can be done with \fBchecksum_tools\fR:
+
+
+.SS Verify the integrity of files
+First generate the checksums:
+.ti 0.75i
+\fBupdate_checksums \fIdirectory\fR
+
+At a later date verify that the files have not changed:
+.ti 0.75i
+\fBverify_checksums \fIdirectory\fR
+
+This will output \f(CWNO CHANGES\fR if the files in the directory are unaltered.
+Note that this will not indicate whether files have been removed,
+
+
+.SS Find duplicate files within a single directory
+.ti 0.75i
+\fBfind_dupes \fIdirectory\fR
+
+
+.SS Find files in one directory that also exist in a second
+.ti 0.75i
+\fBfind_dupes \fIdirectory_1 directory_2\fR
+
+.SS Remove files in one directory that also exist in a second
+.ti 0.75i
+\fBcull_dupes \fIdirectory_1 directory_2\fR
+
+Any files in \fIdirectory_1\fR that also exist in \fIdirectory_2\fR will be removed from \fIdirectory_1\fR.
+
+.SS Find files that differ between two directories or that exist only in one of the directories
+.ti 0.75i
+\fBfind_orphans \fIdirectory_1 directory_2\fR
+
+Both files whose contents differ and those that only exist in one of the directories will be listed.
+Only file size and checksum are considered.
+
+.ti 0.75i
+\fBfind_orphans \-\-same\-name \fIdirectory_1 directory_2\fR
+
+This behaves the same as the previous example except that in addition to file size and checksum, files must have the same name (case-insensitive) to be considered the same.
+
+.SS Move files across devices while ensuring their integrity
+
+Recompute checksums:
+.ti 0.75i
+\fBupdate_checksums --discard-existing \fIsource\fR
+
+Copy to new location:
+.ti 0.75i
+\fBcp \-ap \fIsource destination\fR
+
+The command shown above works on Linux and Mac OS X. For Solaris or FreeBSD use \fB/usr/bin/cp\ \-p\fR, and for NetBSD use \fBcp\ \-p\fR.
+
+Verify that the files were copied correctly:
+.ti 0.75i
+\fBverify_checksums \fIdestination\fR
+
+This will output \f(CWNO CHANGES\fR if the file contents were correctly copied.
+This, however, won't indicate if any files failed to copy at all.
+To determine this run:
+
+.ti 0.75i
+\fBfind_orphans \fIsource destination\fR
+
+If no missing files were found then the above will produce no output. If missing files were found, they will be listed.
+
+If the copy appears correct one can then remove the source:
+
+.ti 0.75i
+\fBcull_dupes \fIsource destination\fR
+.ti 0.75i
+\fBprune_dirs \fIsource\fR
+
+.SS Replace duplicate files with links to a canonical directory
+
+First generate the checksums for the \fIadditional\fR and \fIcanonical\fR directories:
+
+.ti 0.75i
+\fBupdate_checksums \fIadditional canonical\fR
+
+Replace duplicate files in \fIadditional\fR with links to their copies in \fIcanonical\fR:
+
+.ti 0.75i
+\fBlink_dupes \fIadditional canonical\fR
+
+For the above command, hard links will be used whenever possible (i.e. when both locations are on the same device). If hard links can't be used then symlinks will be used. To always use symlinks one can run:
+
+.ti 0.75i
+\fBsymlink_dupes --link-absolute \fIadditional canonical\fR
+
+Depending on your specific circumstances you may wish to use the \fB\-\-link\-relative\fR option, the \fB\-\-link\-absolute\fR option, or neither option.
+
+.SH IGNORED FILES
+
+When processing files, all files named \f(CW.md5sums\fR, \f(CW.folder.png\fR, \f(CW.folder.jpg\fR, \f(CW.atom\fR, \f(CW.directory\fR, or \f(CWswapfile\fR are skipped. To change this list, modify the \f(CW%ignore\fR hash in \fBchecksum_tool\fR.
+
+.SH AUTHOR
+
+.B checksums_tools
+is written by Alexander Hajnal.
+
+The latest version can be downloaded from 
+.IP
+https://github.com/Alex-Kent/checksum_tools/
+.PP
+Any problems can be reported to the issue tracker at 
+.IP
+https://github.com/Alex-Kent/checksum_tools/issues
+.PP
+
+.SH "SEE ALSO"
+.BR clear_checksums (1),
+.BR cull_dupes (1),
+.BR find_dupes (1),
+.BR find_orphans (1),
+.BR get_metadata (1),
+.BR link_dupes (1),
+.BR prune_dirs (1),
+.BR restore_to_xa_location (1),
+.BR symlink_dupes (1),
+.BR update_checksums (1),
+.BR verify_checksums (1),
+
+.BR /usr/local/share/checksum_tools/README.md
+provides a full description of how to use the software.
+
+.SH LICENSE
+
+checksum_tools \(co 2021 Alexander Hajnal
+
+This software is licensed under version 3 of the GNU Affero General Public License.  See the 
+.B LICENSE
+file (included with this software) to view the full text of the license.
+
+

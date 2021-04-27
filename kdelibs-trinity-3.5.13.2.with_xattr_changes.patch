@@ -1,0 +1,112 @@
+--- kdelibs-trinity-3.5.13.2/kio/kio/job.cpp	2012-09-16 05:38:15.000000000 -0400
++++ kdelibs-trinity-3.5.13.2.with_xattr_changes/kio/kio/job.cpp	2021-04-12 19:45:09.925724449 -0400
+@@ -78,6 +78,94 @@
+ #include <fixx11h.h>
+ #endif
+ 
++
++
++#define USE_XATTR 1
++// Extended attribute support (added AKH 2017-11-26)
++
++#ifdef USE_XATTR
++
++#define HAVE_LISTXATTR
++#define HAVE_GETXATTR
++#define HAVE_SETXATTR
++
++
++#include <errno.h>
++#include <stdlib.h>
++#include <string.h>
++#include <iostream>
++
++#include <attr/xattr.h>
++#include "attr/libattr.h"
++#include <stdarg.h>
++
++extern "C" {
++# include <attr/error_context.h>
++
++# include <attr/libattr.h>
++}
++#if defined(HAVE_ALLOCA)
++# define my_alloc(size) alloca (size)
++# define my_free(ptr) do { } while(0)
++#else
++# define my_alloc(size) malloc (size)
++# define my_free(ptr) free (ptr)
++#endif
++/*
++ * Optional error handler for attr_copy_file(). CTX is the error
++ * context passed to attr_copy_file(), ERR is the errno value
++ * that occurred. FMT and the rest are printf style arguments.
++ */
++static void
++error(struct error_context *ctx, const char *fmt, ...)
++{
++	va_list ap;
++
++	va_start(ap, fmt);
++	if (vfprintf(stderr, fmt, ap))
++		fprintf(stderr, ": ");
++	fprintf(stderr, "%s\n", strerror(errno));
++	va_end(ap);
++}
++
++/*
++ * Optional handler for quoting path names in error messages.
++ * (This is a very stupid example!)
++ */
++static const char *
++quote(struct error_context *ctx, const char *pathname)
++{
++	char *pn = strdup(pathname), *p;
++	pathname = strdup(pathname);
++	for (p = pn; *p != '\0'; p++)
++		if (*p & 0x80)
++			*p='?';
++	return pn;
++}
++
++static void
++quote_free(struct error_context *ctx, const char *name)
++{
++	free((void *)name);
++}
++
++/*
++ * The error context we pass to attr_copy_file().
++ */
++struct error_context ctx = { error, quote, quote_free };
++
++/*
++ * Optional attribute filter for attr_copy_file(). This example
++ * excludes all attributes other than extended user attributes.
++ */
++static int is_user_attr(const char *name, struct error_context *ctx)
++{
++	return strcmp(name, "user.") == 0;
++}
++
++#endif /* USE_XATTR */
++
++
+ using namespace KIO;
+ template class TQPtrList<KIO::Job>;
+ 
+@@ -1923,6 +2011,14 @@
+    if (job == m_copyJob)
+    {
+       m_copyJob = 0;
++      
++#ifdef USE_XATTR
++      {
++          // Copy extended attributes (added AKH 2017-11-26)
++          attr_copy_file(TQFile::encodeName(m_src.path()), TQFile::encodeName(m_dest.path()), NULL, &ctx);
++      }
++#endif
++
+       if (m_move)
+       {
+          d->m_delJob = file_delete( m_src, false/*no GUI*/ ); // Delete source

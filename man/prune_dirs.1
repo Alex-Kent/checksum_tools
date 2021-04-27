@@ -1,0 +1,172 @@
+.pc
+
+.TH PRUNE_DIRS 1 "2021-04-27" "1.0.0" "Checksum tools"
+.SH NAME
+prune_dirs \- Recursively delete empty directories
+
+.SH SYNOPSIS
+
+.B prune_dirs
+.I directory
+[ \&... ] [
+.I options
+]
+
+.SH OVERVIEW
+
+Recursively delete directories that are considered to be empty.
+
+.SH NOTES
+Directories are considered empty if they contain no files besides \f(CW.md5sums\fR, \f(CW.img-md5sums\fR, \f(CW.atom\fR, \f(CW.DS_Store\fR, \f(CW.directory\fR, \f(CW.folder.png\fR, \f(CWThumbs.db\fR, \f(CWDesktop.ini\fR, \f(CWBBThumbs.dat\fR, or \f(CW.DS_Store\fR and no non-empty subdirectories besides \f(CW.xvpics\fR, \f(CW.pics\fR, or \f(CW.AppleDouble\fR. In addition, if the \fB\-\-ignore\-symlinks\fR option is given then directories containing only symbolic links and no files (special or otherwise, beyond those mentioned above) are also considered to be empty.
+
+Normally, empty subdirectories are deleted even when there parent isn't empty.  To only allow deletion of fully-empty top-level directories specify \fB\-\-all\-or\-nothing\fR on the commandline.
+
+.SH OPTIONS
+
+.SS "Main options"
+
+.TP
+.B \-a\fR, \fB\-\-all\-or\-nothing
+Only act if the entire object would be affected.
+
+For example, running \fBprune_dirs\fR on an object with this option active will only perform deletions if the entire object would be deleted.
+
+.TP
+.B \-A\fR, \fB\-\-no\-act
+Do not delete or move any files (\f(CW.md5sums\fR and extended attribute metadata may be updated)
+
+.TP
+.B \-E\fR, \fB\-\-ignore\-symlinks
+Do not delete or move any files (\f(CW.md5sums\fR and extended attribute metadata may be updated)
+.TP
+.B \-r\fR, \fB\-\-recurse
+Recurse into subdirectories (default)
+
+.TP
+.B \-R\fR, \fB\-\-no\-recurse
+Do not recurse into subdirectories
+
+.TP
+.B \-x\fR, \fB\-\-one\-filesystem
+Don't cross filesystem boundaries while recursing.
+
+.SS "Core options"
+The following options can be used with any command in the 
+.B checksum_tools 
+suite:
+
+.TP
+.B \-h\fR, \fB\-\-help
+Show brief usage message
+
+.TP
+.B \-H\fR, \fB\-\-help\-all
+Show detailed usage message
+
+.TP
+.B \-\-help\-core
+Show options supported by all commands
+
+.TP
+.B \-A\fR, \fB\-\-no\-act
+Do not delete or move any files (\f(CW.md5sums\fR and extended attribute metadata may be updated)
+
+.TP
+.B \-b\fR, \fB\-\-built\-in\-copy
+Use a built-in function to copy files (instead of using e.g. \fBcp \-ap\fR); this is also used when copying files or moving files across devices.
+
+(not currently implemented)
+
+.TP
+.B \-c\fR, \fB\-\-compute\-missing
+Compute and store MD5 checksums when not present
+
+(default)
+
+.TP
+.B \-\-no\-compute\-missing
+Don't compute or store missing MD5 checksums
+
+.TP
+.B \-d\fR, \fB\-\-discard\-existing
+Discard existing checksums and recompute them
+
+.TP
+.B \-E\fR, \fB\-\-ignore\-symlinks
+Directories holding only symlinks or subdirectories (no regular files) are considered empty.
+
+.TP
+.B \-n\fR, \fB\-\-same\-name
+For a file to match it must have same filename (case-insensitive) as well as the same fingerprint.
+
+At some point a \f(CW--case-insensitive\fR option may be added; if this is done, the \f(CW--same-name\fR option will be case-sensitive unless case-insensitivity is explicitly requested.
+
+.TP
+.B \-O\fR, \fB\-\-overwrite
+Allow overwriting of existing files
+
+.TP
+.B \-P\fR, \fB\-\-preserve
+Never overwrite existing files
+
+Attempting to overwrite an exising file will display a warning to \f(CWSTDERR\fR then continue.
+
+.TP
+.B \-r\fR, \fB\-\-recurse
+Recurse into subdirectories (default)
+
+.TP
+.B \-R\fR, \fB\-\-no\-recurse
+Do not recurse into subdirectories
+
+.TP
+.B \-x\fR, \fB\-\-one\-filesystem
+Don't cross filesystem boundaries while recursing
+
+.TP
+.B \-\-never\-rewrite\-checksums
+If set then neither extended attributes nor the \f(CW.md5sums\fR files will be written to under any circumstances.
+
+.SH AUTHOR
+
+.B checksums_tools
+is written by Alexander Hajnal.
+
+The latest version can be downloaded from 
+.IP
+https://github.com/Alex-Kent/checksum_tools/
+.PP
+Any problems can be reported to the issue tracker at 
+.IP
+https://github.com/Alex-Kent/checksum_tools/issues
+.PP
+
+.SH "SEE ALSO"
+.BR checksum_tool (1), 
+.BR clear_checksums (1),
+.BR cull_dupes (1),
+.BR find_dupes (1),
+.BR find_orphans (1),
+.BR get_metadata (1),
+.BR link_dupes (1),
+.BR restore_to_xa_location (1),
+.BR symlink_dupes (1),
+.BR update_checksums (1),
+.BR verify_checksums (1)
+
+Usage examples can be found in 
+.BR checksum_tool (1)
+\.
+
+.BR /usr/local/share/checksum_tools/README.md
+provides a full description of how to use the software.
+
+.SH LICENSE
+
+checksum_tools \(co 2021 Alexander Hajnal
+
+This software is licensed under version 3 of the GNU Affero General Public License.  See the 
+.B LICENSE
+file (included with this software) to view the full text of the license.
+
+
