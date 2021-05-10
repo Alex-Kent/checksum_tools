@@ -98,6 +98,11 @@ This operates the same as `find_dupes` except that all files determined to be du
     -r | --recurse             Recurse into subdirectories (default)
     -R | --no-recurse          Do not recurse into subdirectories
     -x | --one-filesystem      Don't cross filesystem boundaries while recursing
+    --show-all-checksums       Show checksum on all lines, not just the first
+    --terse=MODE               Use terse output; MODE controls what is shown:
+                               dupe -> only duplicate file paths
+                               keep -> only kept file paths
+                               both -> both types, prefixed with DUPE: or keep:
 
 ---
 
@@ -141,6 +146,11 @@ This operates the same as `cull_dupes`  except that all files determined to be d
     
                                Lowercase hex digits are output in hex and uri modes.
                                Uppercase hex digits are output in HEX and URI modes.
+    --show-all-checksums       Show checksum on all lines, not just the first
+    --terse=MODE               Use terse output; MODE controls what is shown:
+                               dupe -> only duplicate file paths
+                               keep -> only kept file paths
+                               both -> both types, prefixed with DUPE: or keep:
 
 Output is multiple lines for each matched fingerprint (`MD5:size` or `MD5:size:lowercase_name` in same-name mode).  The first line for each set of duplicates has the fingerprint followed by spaces with additional lines being prefixed with spaces.  When called with a single directory, all files but the last are marked as `DUPE` except the last which is marked `keep`; when a `REFERENCE_DIRECTORY` is given then multiple `keep` lines may be shown.  Files marked `DUPE` are those that would be deleted, moved, or replaced with links when the cull, move, or link modes are used.  The remainder of each line is a tab, the filename, a tab, and the file's directory.  If the `--long-names` option is given then each line ends with two tabs followed by the full path of the file.
 
@@ -246,11 +256,11 @@ Display file metadata.  One use for this is making a backup copy of the files' a
                                Lowercase hex digits are output in hex and uri modes.
                                Uppercase hex digits are output in HEX and URI modes.
 
-
 Metadata for all files is written to `STDOUT` (one file per line).  Metadata is reported as key/value pairs (`KEY:VALUE`) with a single tab between each pair.  If an attribute is not present for a file (e.g. `jpeg.md5` for a text file) then the attribute is not listed (i.e. attributes do not have `NULL` values).  The following attributes may be reported:
 
-    path        Current path (either relative or absolute)
+    path        Path (either relative or absolute)
     name        Name
+    fullpath    Path and name (either relative or absolute)
     type        One of: dir file link block char fifo socket
     mode        Mode bits (4-digit octal)
     user        Owner: NUMBER (NAME)
@@ -308,6 +318,11 @@ Replace any files in `OBJECTS` that exist in `REFERENCE_DIRECTORY` with links to
     -r | --recurse             Recurse into subdirectories (default)
     -R | --no-recurse          Do not recurse into subdirectories
     -x | --one-filesystem      Don't cross filesystem boundaries while recursing
+    --show-all-checksums       Show checksum on all lines, not just the first
+    --terse=MODE               Use terse output; MODE controls what is shown:
+                               dupe -> only duplicate file paths
+                               keep -> only kept file paths
+                               both -> both types, prefixed with DUPE: or keep:
 
 Hard links will be used whenever possible; if this cannot be done (e.g. cross-device links) then symbolic links will be used.  When symbolic links are used, relative links are used if the file being pointed by the link to has a relative path and absolute links are used if the file being pointed to has an absolute path.  The the `--link-absolute` option can be used to force the use of absolute links and `--link-relative` can be used to force use of relative links.
 
@@ -407,6 +422,11 @@ Replace any files in `OBJECTS` that exist in `REFERENCE_DIRECTORY` with symbolic
     -r | --recurse             Recurse into subdirectories (default)
     -R | --no-recurse          Do not recurse into subdirectories
     -x | --one-filesystem      Don't cross filesystem boundaries while recursing
+    --show-all-checksums       Show checksum on all lines, not just the first
+    --terse=MODE               Use terse output; MODE controls what is shown:
+                               dupe -> only duplicate file paths
+                               keep -> only kept file paths
+                               both -> both types, prefixed with DUPE: or keep:
 
 Relative links are used if the file being pointed by the link to has a relative path and absolute links are used if the file being pointed to has an absolute path.  The `--link-absolute` option can be used to force the use of absolute links for all links and `--link-relative` can be used to force use of relative links for all links.
 
@@ -620,7 +640,7 @@ The `md5sums` file contains checksums for all files in a directory.  The first l
 
 The fingerprints are also stored in the files' extended attributes.  The `user._` attribute contains the file's 32-character MD5 checksum, a colon (`:`), the file's timestamp at the time the checksum was computed, another colon (`:`), and the file's size at the time the checksum was computed.<sup>1</sup>
 
-Additional metadata may also be stored in the extended attributes.  When the `--move-to` option is active, a moved file's original location (absolute path) is stored in the `user.meta.original_path` attribute<sup>2</sup>.  When processed using `jpeg_checksum_tools`, JPEG files may have further extended attributes giving, for example, the location where they were taken.
+Additional metadata may also be stored in the extended attributes.  When the `--move-dupes` option is active, a moved file's original location (absolute path) is stored in the `user.meta.original_path` attribute<sup>2</sup>.  When processed using `jpeg_checksum_tools`, JPEG files may have further extended attributes giving, for example, the location where they were taken.
 
 <sup>1</sup> Formerly the `user.md5`, `user.md5_mtime`, and `user.md5_size` attributes were used.  This was found to waste a lot of disk space (typically 4kB per file, ~0.5% overall) so the new, compact, format was switched to.  The compact format fits well within the 68 characters that can be stored in-inode for single-character keys on `ext4` filesystems (i.e. on Linux).
 

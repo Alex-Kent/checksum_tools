@@ -16,7 +16,7 @@ use strict;
 
 $| = 1;
 
-my $VERSION_STRING = '1.0.0';
+my $VERSION_STRING = '1.1.0';
 
 # Files to completely ignore
 my %ignore = map { $_ => 1 } ( '.md5sums', '.no_md5sums', '.img-md5sums', '.atom', '.DS_Store', '.directory', '.folder.png', 'Thumbs.db', 'Desktop.ini', 'BBThumbs.dat', '.DS_Store', 'swapfile' );
@@ -884,8 +884,8 @@ EOF
 Move duplicates option
 --------------------------------------------------------------------------------
 
-COMMAND OPTIONS --move-to MOVE_TO_DIRECTORY
-COMMAND OPTIONS -m        MOVE_TO_DIRECTORY
+COMMAND OPTIONS --move-dupes MOVE_TO_DIRECTORY
+COMMAND OPTIONS -m           MOVE_TO_DIRECTORY
 
 This option can only be used in conjection with cull, link, or symlink modes.  
 Any files that would otherwise be deleted are moved into MOVE_TO_DIRECTORY.  The
@@ -1649,7 +1649,7 @@ EOF
 			'alias' => 'cull_dupes',
 			'supported-options' => [ 'no-act', 'discard-existing', 'move-dupes', 
 			                         'same-name', 'overwrite', 'preserve', 
-			                         'built-in-copy', 
+			                         'built-in-copy', 'show-all-checksums', 'terse', 
 			                         'recurse', 'no-recurse', 'one-filesystem' ],
 			'syntax' => [
 				{ 'en' => 'OBJECTS KEEP_DIRECTORY [ OPTIONS ]' },
@@ -1729,30 +1729,20 @@ ALIAS	'user-finalize-loop' => '{find_dupes}{user-finalize-loop}',
 			'finalize' => sub {
 				my ( $_user, $_OPTIONS ) = @_;
 				
-				my $dupe = Localize( $$_STRINGS{'DUPE'} );
-				my $keep = Localize( $$_STRINGS{'keep'} );
+				# === Show duplicates ===
 				
-				my $dupe_callback = sub {
-					my ( $md5, $display_md5, $file, $_user, $_OPTIONS ) = @_;
-					if ( $$_OPTIONS{'long-names'} ) {
-						printf("%-49s %s\t%s\t%s\t%s\n", $display_md5, $dupe, $file->{'escaped_name'}, $file->{'escaped_directory'}, $file->{escaped_full_path});
-					} else {
-						printf("%-49s %s\t%s\t%s\n",     $display_md5, $dupe, $file->{'escaped_name'}, $file->{'escaped_directory'});
-					}
-				};
-				
-				my $keep_callback = sub {
-					my ( $md5, $display_md5, $file, $_user, $_OPTIONS ) = @_;
-					if ( $$_OPTIONS{'long-names'} ) {
-						printf("%-49s %s\t%s\t%s\t%s\n", $display_md5, $keep, $file->{'escaped_name'}, $file->{'escaped_directory'}, $file->{escaped_full_path});
-					} else {
-						printf("%-49s %s\t%s\t%s\n",     $display_md5, $keep, $file->{'escaped_name'}, $file->{'escaped_directory'});
-					}
-				};
+				my $dupe_callback = REFERENCE_TO( '{find_dupes}{user-show-dupe-callback}' );
+				my $keep_callback = REFERENCE_TO( '{find_dupes}{user-show-keep-callback}' );
 				
 				&{ $$_OPTIONS{'_COMMAND'}{'user-finalize-loop'} }( $_user, $dupe_callback, $keep_callback, $_OPTIONS );
 				
+				
+				
 				print "\n";
+				
+				
+				
+				# === Cull duplicates ===
 				
 				my $dupe_callback = sub {
 					my ( $md5, $display_md5, $file, $_user, $_OPTIONS ) = @_;
@@ -1793,7 +1783,7 @@ ALIAS	'user-finalize-loop' => '{find_dupes}{user-finalize-loop}',
 			'long'  => '--find-dupes', 
 			'alias' => 'find_dupes',
 			'supported-options' => [ 'discard-existing', 'same-name', 'long-names', 
-			                         'escape-filenames', 
+			                         'escape-filenames', 'show-all-checksums', 'terse', 
 			                         'recurse', 'no-recurse', 'one-filesystem' ],
 			'syntax' => [
 				{ 'en' => 'OBJECTS REFERENCE_DIRECTORY [ OPTIONS ]' }, 
@@ -1949,6 +1939,9 @@ EOF
 				my ( $_user, $dupe_callback, $keep_callback, $_OPTIONS ) = @_;
 				#print "user-finalize-loop( $_user, $dupe_callback, $keep_callback, $_OPTIONS )\n";
 				
+				$$_user{'dupe string'} = Localize( $$_STRINGS{'DUPE'} );
+				$$_user{'keep string'} = Localize( $$_STRINGS{'keep'} );
+				
 				my $encode_filename = sub {
 					my ( $file ) = @_;
 					$file->{'escaped_directory'} = ( $$_OPTIONS{'escape-filenames'} ) 
@@ -1969,8 +1962,7 @@ EOF
 					my $src = $$_user{'src'};
 					
 					# === Loop through all the checksums ===
-					foreach my $key (keys %$src) {
-						my $md5 = $key;
+					foreach my $md5 (keys %$src) {
 						if (scalar @{$$src{$md5}} > 1) {
 							# === If multiple files found for the checksum ===
 							my $this = 1;
@@ -1983,15 +1975,17 @@ EOF
 							if (scalar @tmp > 1) {
 								# === Culled filename list has multiple entries ===
 								# === so display their checksum, names, and paths ===
+								my $shown_md5 = $md5;
 								foreach my $file (reverse @tmp) {
+									next if ( -l File::Spec->catfile( $file->{'directory'}, $file->{'name'} ) );
 									&$encode_filename($file);
 									if ($this == $last) {
-										&{ $keep_callback }( $md5, $md5, $file, $_user, $_OPTIONS );
+										&{ $keep_callback }( $md5, $shown_md5, $file, $_user, $_OPTIONS );
 									} else {
-										&{ $dupe_callback }( $md5, $md5, $file, $_user, $_OPTIONS );
+										&{ $dupe_callback }( $md5, $shown_md5, $file, $_user, $_OPTIONS );
 									}
 									$this++;
-									$md5 = "";
+									$shown_md5 = "";
 								}
 							}
 						}
@@ -2007,27 +2001,107 @@ EOF
 					my $dst = $$_user{'dst'};
 					
 					# === Loop through all the checksums in the source directory ===
-					foreach my $key (keys %$src) {
-						#print "src: $key\n";
-						if (defined $$dst{$key}) {
+					foreach my $md5 (keys %$src) {
+						#print "src: $md5\n";
+						if (defined $$dst{$md5}) {
 							# === If checksum match found in the destination directory ===
-							my $shown_key = $key;
-							foreach my $file (@{$$src{$key}}) {
-								#printf("%-49s DUPE\t%s\t%s\n", $shown_key, $file->{'name'}, $file->{'directory'});
+							my $shown_md5 = $md5;
+							foreach my $file (@{$$src{$md5}}) {
+								next if ( -d File::Spec->catfile( $file->{'directory'}, $file->{'name'} ) );
+								#printf("%-49s DUPE\t%s\t%s\n", $shown_md5, $file->{'name'}, $file->{'directory'});
 								&$encode_filename($file);
-								&{ $dupe_callback }( $key, $shown_key, $file, $_user, $_OPTIONS );
-								$shown_key = "";
+								&{ $dupe_callback }( $md5, $shown_md5, $file, $_user, $_OPTIONS );
+								$shown_md5 = "";
 							}
 							# === Display destination directory's matching filenames and paths ===
-							foreach my $file (@{$$dst{$key}}) {
-								#printf("%-49s keep\t%s\t%s\n", $shown_key, $file->{'name'}, $file->{'directory'});
+							foreach my $file (@{$$dst{$md5}}) {
+								next if ( -l File::Spec->catfile( $file->{'directory'}, $file->{'name'} ) );
+								#printf("%-49s keep\t%s\t%s\n", $shown_md5, $file->{'name'}, $file->{'directory'});
 								&$encode_filename($file);
-								&{ $keep_callback }( $key, $shown_key, $file, $_user, $_OPTIONS );
-								$shown_key = "";
+								&{ $keep_callback }( $md5, $shown_md5, $file, $_user, $_OPTIONS );
+								$shown_md5 = "";
 							}
 						}
 					}
 					
+				}
+			},
+			
+			# *** find_dupes  :  user-show-dupe-callback ***
+			'user-show-dupe-callback' => sub {
+				my ( $md5, $shown_md5, $file, $_user, $_OPTIONS ) = @_;
+				
+				my $dupe = $$_user{'dupe string'};
+				
+				if ( ! defined $$_OPTIONS{'terse'} ) {
+					# === Normal mode ===
+					
+					if ( $$_OPTIONS{'show-all-checksums'} ) {
+						if ( $$_OPTIONS{'long-names'} ) {
+							printf("%-49s %s\t%s\t%s\t%s\n", $md5, $dupe, $file->{'escaped_name'}, $file->{'escaped_directory'}, $file->{escaped_full_path});
+						} else {
+							printf("%-49s %s\t%s\t%s\n",     $md5, $dupe, $file->{'escaped_name'}, $file->{'escaped_directory'});
+						}
+					} else {
+						if ( $$_OPTIONS{'long-names'} ) {
+							printf("%-49s %s\t%s\t%s\t%s\n", $shown_md5, $dupe, $file->{'escaped_name'}, $file->{'escaped_directory'}, $file->{escaped_full_path});
+						} else {
+							printf("%-49s %s\t%s\t%s\n",     $shown_md5, $dupe, $file->{'escaped_name'}, $file->{'escaped_directory'});
+						}
+					}
+					# === END normal mode ===
+					
+				} elsif ( $$_OPTIONS{'terse'} eq 'keep' ) {
+					# === Terse mode but not showing dupes ===
+					return;
+					
+				} elsif ( $$_OPTIONS{'terse'} eq 'dupe' ) {
+					# === Terse mode only showing dupes ===
+					print $file->{escaped_full_path}."\n";
+					
+				} else {
+					# === Terse mode, showing both dupe and keep ===
+					print "$dupe:$file->{escaped_full_path}\n";
+				}
+				
+			},
+			
+			# *** find_dupes  :  user-show-keep-callback ***
+			
+			'user-show-keep-callback' => sub {
+				my ( $md5, $shown_md5, $file, $_user, $_OPTIONS ) = @_;
+				
+				my $keep = $$_user{'keep string'};
+				
+				if ( ! defined $$_OPTIONS{'terse'} ) {
+					# === Normal mode ===
+					
+					if ( $$_OPTIONS{'show-all-checksums'} ) {
+						if ( $$_OPTIONS{'long-names'} ) {
+							printf("%-49s %s\t%s\t%s\t%s\n", $md5, $keep, $file->{'escaped_name'}, $file->{'escaped_directory'}, $file->{escaped_full_path});
+						} else {
+							printf("%-49s %s\t%s\t%s\n",     $md5, $keep, $file->{'escaped_name'}, $file->{'escaped_directory'});
+						}
+					} else {
+						if ( $$_OPTIONS{'long-names'} ) {
+							printf("%-49s %s\t%s\t%s\t%s\n", $shown_md5, $keep, $file->{'escaped_name'}, $file->{'escaped_directory'}, $file->{escaped_full_path});
+						} else {
+							printf("%-49s %s\t%s\t%s\n",     $shown_md5, $keep, $file->{'escaped_name'}, $file->{'escaped_directory'});
+						}
+					}
+					# === END normal mode ===
+					
+				} elsif ( $$_OPTIONS{'terse'} eq 'keep' ) {
+					# === Terse mode showing keep ===
+					print $file->{escaped_full_path}."\n";
+					
+				} elsif ( $$_OPTIONS{'terse'} eq 'dupe' ) {
+					# === Terse mode but not showing keep ===
+					return;
+					
+				} else {
+					# === Terse mode, showing both dupe and keep ===
+					print "$keep:$file->{escaped_full_path}\n";
 				}
 			},
 			
@@ -2036,26 +2110,10 @@ EOF
 			'finalize' => sub {
 				my ( $_user, $_OPTIONS ) = @_;
 				
-				my $dupe = Localize( $$_STRINGS{'DUPE'} );
-				my $keep = Localize( $$_STRINGS{'keep'} );
+				# === Show duplicates ===
 				
-				my $dupe_callback = sub {
-					my ( $md5, $display_md5, $file, $_user, $_OPTIONS ) = @_;
-					if ( $$_OPTIONS{'long-names'} ) {
-						printf("%-49s %s\t%s\t%s\t%s\n", $md5, $dupe, $file->{'escaped_name'}, $file->{'escaped_directory'}, $file->{escaped_full_path});
-					} else {
-						printf("%-49s %s\t%s\t%s\n",     $md5, $dupe, $file->{'escaped_name'}, $file->{'escaped_directory'});
-					}
-				};
-				
-				my $keep_callback = sub {
-					my ( $md5, $display_md5, $file, $_user, $_OPTIONS ) = @_;
-					if ( $$_OPTIONS{'long-names'} ) {
-						printf("%-49s %s\t%s\t%s\t%s\n", $md5, $keep, $file->{'escaped_name'}, $file->{'escaped_directory'}, $file->{escaped_full_path});
-					} else {
-						printf("%-49s %s\t%s\t%s\n",     $md5, $keep, $file->{'escaped_name'}, $file->{'escaped_directory'});
-					}
-				};
+				my $dupe_callback = REFERENCE_TO( '{find_dupes}{user-show-dupe-callback}' );
+				my $keep_callback = REFERENCE_TO( '{find_dupes}{user-show-keep-callback}' );
 				
 				&{ $$_OPTIONS{'_COMMAND'}{'user-finalize-loop'} }( $_user, $dupe_callback, $keep_callback, $_OPTIONS );
 			},
@@ -2076,7 +2134,7 @@ EOF
 			'long'  => '--find-orphans', 
 			'alias' => 'find_orphans',
 			'supported-options' => [ 'discard-existing', 'same-name', 'long-names', 
-			                         'escape-filenames', 
+			                         'escape-filenames', 'terse', 
 			                         'recurse', 'no-recurse', 'one-filesystem' ],
 			'syntax' => [
 					{ 'en' => 'DIRECTORY_1 DIRECTORY_2 [ OPTIONS ]' }
@@ -2193,6 +2251,7 @@ ALIAS	'phase-2-per-object' => '{find_dupes}{phase-2-per-object}',
 						# === Add all files in source directory that have the checksum ===
 						# === to the list of orphaned files ===
 						foreach my $file (@{$$src{$key}}) {
+							next if ( -l File::Spec->catfile( $file->{'directory'}, $file->{'name'} ) );
 							#push @orphans, [ $file->{directory}, $file->{name}, $key ];
 							my $enc_dir  = ( $$_OPTIONS{'escape-filenames'} )  ?  EscapeString( $file->{directory}, $$_OPTIONS{'escape-filenames'}  )  :  $file->{directory};
 							my $enc_file = ( $$_OPTIONS{'escape-filenames'} )  ?  EscapeString( $file->{name},      $$_OPTIONS{'escape-filenames'}  )  :  $file->{name};
@@ -2210,6 +2269,7 @@ ALIAS	'phase-2-per-object' => '{find_dupes}{phase-2-per-object}',
 						# === Add all files in destination directory that have the checksum ===
 						# === to the list of orphaned files ===
 						foreach my $file (sort @{$$dst{$key}}) {
+							next if ( -l File::Spec->catfile( $file->{'directory'}, $file->{'name'} ) );
 							#push @orphans, [ $dir, $file->{name}, $key ];
 							my $enc_dir  = ( $$_OPTIONS{'escape-filenames'} )  ?  EscapeString( $file->{directory}, $$_OPTIONS{'escape-filenames'}  )  :  $file->{directory};
 							my $enc_file = ( $$_OPTIONS{'escape-filenames'} )  ?  EscapeString( $file->{name},      $$_OPTIONS{'escape-filenames'}  )  :  $file->{name};
@@ -2268,8 +2328,9 @@ If an attribute is not present for a file (e.g. jpeg.md5 for a text file) then
 the attribute is not listed (i.e. attributes do not have NULL values).  The 
 following attributes may be reported:
 
-    path        Current path (either relative or absolute)
+    path        Path (either relative or absolute)
     name        Name
+    fullpath    Full path and name (either relative or absolute)
     type        One of: dir file link block char fifo socket
     mode        Mode bits (4-digit octal)
     user        Owner: NUMBER (NAME)
@@ -2327,19 +2388,21 @@ EOF
 				$meta{'md5.source'} = $$_metadata{'source'};
 				
 				
-				# === Get printable directory and file names ===
-				if ( $$_OPTIONS{'escape-filenames'} ) {
-					$meta{path} = EscapeString( $directory, $$_OPTIONS{'escape-filenames'} );  # Current path (either relative or absolute)
-					$meta{name} = EscapeString( $object,    $$_OPTIONS{'escape-filenames'} );  # Name
-					
-				} else {
-					$meta{path} = $directory;  # Current path (either relative or absolute)
-					$meta{name} = $object;     # Name
-					
-				}
-				
 				# === Get single file path for use later ===
 				my $filepath = File::Spec->catfile( $directory, $object );
+				
+				# === Get printable directory and file names ===
+				if ( $$_OPTIONS{'escape-filenames'} ) {
+					$meta{path}     = EscapeString( $directory, $$_OPTIONS{'escape-filenames'} );  # Current path (either relative or absolute)
+					$meta{name}     = EscapeString( $object,    $$_OPTIONS{'escape-filenames'} );  # Name
+					$meta{fullpath} = EscapeString( $filepath,  $$_OPTIONS{'escape-filenames'} );  # Path and name
+					
+				} else {
+					$meta{path}     = $directory;  # Current path (either relative or absolute)
+					$meta{name}     = $object;     # Name
+					$meta{fullpath} = $filepath;     # Name
+					
+				}
 				
 				# === Determine file type ===
 				# One of: dir file link block char fifo socket
@@ -2383,7 +2446,7 @@ EOF
 				
 				
 				$meta{'md5.valid'} = ( defined $meta{'md5'} ) 
-				                   ? ( $size == $meta{'md5.size'} ) & ( $mtime == $meta{'md5.mtime'} ) ? 'yes' : 'no'
+				                   ? ( $size == $meta{'md5.size'} ) && ( $mtime == $meta{'md5.mtime'} ) ? 'yes' : 'no'
 				                   : undef;
 				
 				# === Get all of file's extended attributes ===
@@ -2472,7 +2535,7 @@ EOF
 				my $first = 1;
 				my $value;
 				
-				foreach my $key ( qw(path name type mode user group size mtime target device original md5 md5.mtime md5.size md5.source md5.valid jpeg_md5 ) ) {
+				foreach my $key ( qw(path name fullpath type mode user group size mtime target device original md5 md5.mtime md5.size md5.source md5.valid jpeg_md5 ) ) {
 					if (defined $meta{$key}) {
 						if ($first) {
 							$first = 0;
@@ -2548,6 +2611,7 @@ EOF
 			'supported-options' => [ 'no-act', 'discard-existing', 'link-relative', 
 			                         'link-absolute', 'move-dupes', 'same-name', 
 			                         'overwrite', 'preserve', 'built-in-copy', 
+			                         'show-all-checksums', 'terse', 
 			                         'recurse', 'no-recurse', 'one-filesystem' ],
 			'syntax' => [
 				{ 'en' => 'OBJECTS REFERENCE_DIRECTORY [ OPTIONS ]' },
@@ -2992,6 +3056,7 @@ EOF
 			'supported-options' => [ 'no-act', 'discard-existing', 'link-relative', 
 			                         'link-absolute', 'move-dupes', 'same-name', 
 			                         'overwrite', 'preserve', 'built-in-copy', 
+			                         'show-all-checksums', 'terse', 
 			                         'recurse', 'no-recurse', 'one-filesystem' ],
 			'syntax' => [
 				{ 'en' => 'OBJECTS REFERENCE_DIRECTORY [ OPTIONS ]' },
@@ -3092,39 +3157,17 @@ ALIAS	'user-finalize-loop' => '{find_dupes}{user-finalize-loop}',
 				
 				# === Show duplicates ===
 				
-				my $dupe_callback = sub {
-					my ( $md5, $display_md5, $file, $_user, $_OPTIONS ) = @_;
-					if ( $$_OPTIONS{'long-names'} ) {
-						printf("%-49s %s\t%s\t%s\t%s\n", $md5, $dupe, $file->{'escaped_name'}, $file->{'escaped_directory'}, $file->{escaped_full_path});
-					} else {
-						printf("%-49s %s\t%s\t%s\n",     $md5, $dupe, $file->{'escaped_name'}, $file->{'escaped_directory'});
-					}
-				};
+				$$_user{'dupe string'} = Localize( $$_STRINGS{'DUPE'} );
+				$$_user{'keep string'} = Localize( $$_STRINGS{'keep'} );
 				
-				my $keep_callback = sub {
-					my ( $md5, $display_md5, $file, $_user, $_OPTIONS ) = @_;
-					#print Dumper( $_user );
-					if ( $$_OPTIONS{'long-names'} ) {
-						printf("%-49s %s\t%s\t%s\t%s\n", $md5, $keep, $file->{'escaped_name'}, $file->{'escaped_directory'}, $file->{escaped_full_path});
-					} else {
-						printf("%-49s %s\t%s\t%s\n",     $md5, $keep, $file->{'escaped_name'}, $file->{'escaped_directory'});
-					}
-					
-					# === Record canonical file for checksum ===
-					if ( $$_OPTIONS{'same-name'}) {
-						$$_user{'canonical'}{"$$file{metadata}{md5}:$$file{metadata}{size}:".lc($$file{metadata}{name})} = $file;
-					} else {
-						$$_user{'canonical'}{"$$file{metadata}{md5}:$$file{metadata}{size}"} = $file;
-					}
-				};
+				my $dupe_callback = REFERENCE_TO( '{find_dupes}{user-show-dupe-callback}' );
+				my $keep_callback = REFERENCE_TO( '{find_dupes}{user-show-keep-callback}' );
 				
 				&{ $$_OPTIONS{'_COMMAND'}{'user-finalize-loop'} }( $_user, $dupe_callback, $keep_callback, $_OPTIONS );
 				
 				
 				
-				
 				print "\n";
-				
 				
 				
 				
@@ -3691,7 +3734,7 @@ EOF
 			}
 		},
 		
-		# === compute-missing ===
+		# === no-compute-missing ===
 		'no-compute-missing' => { 
 			'short'          => undef, 
 			'long'           => '--no-compute-missing', 
@@ -3753,6 +3796,7 @@ EOF
                            
                            Lowercase hex digits are output in hex and uri modes.
                            Uppercase hex digits are output in HEX and URI modes.
+
 EOF
 			}
 		},
@@ -3809,10 +3853,10 @@ EOF
 			}
 		},
 		
-		# === move-to ===
+		# === move-dupes ===
 		'move-dupes' => { 
 			'short'          => '-m', 
-			'long'           => '--move-to', 
+			'long'           => '--move-dupes', 
 			'core-option'    => 0,
 			'default'        => undef,
 			'takes-arg'      => 1, 
@@ -3869,7 +3913,7 @@ EOF
 			}
 		},
 		
-		# === long-names ===
+		# === never-rewrite-checksums ===
 		'never-rewrite-checksums' => { 
 			'short'          => undef, 
 			'long'           => '--never-rewrite-checksums', 
@@ -3961,6 +4005,44 @@ EOF
 			'error-check'    => undef, # Handled by recurse, above
 			'usage'          => { 'en' => <<EOF
 -R | --no-recurse          Do not recurse into subdirectories
+EOF
+			}
+		},
+		
+		# === show-all-checksums ===
+		'show-all-checksums' => { 
+			'short'          => undef, 
+			'long'           => '--show-all-checksums', 
+			'core-option'    => 1,
+			'default'        => 0,
+			'takes-arg'      => 0,
+			'error-check'    => undef,
+			'usage'          => { 'en' => <<EOF
+--show-all-checksums       Show checksum on all lines, not just the first
+EOF
+			}
+		},
+		
+		# === terse={dupe,keep,both} ===
+		'terse' => { 
+			'short'          => undef, 
+			'long'           => '--terse', 
+			'core-option'    => 1,
+			'default'        => undef,
+			'takes-arg'      => 1,
+			'error-check'    => sub {
+				my ($COMMAND, $OPTION, $_options, $_targets) = @_;
+				
+				unless ( $$_options{terse} =~ /^(dupe|keep|both)$/ ) {
+					return [ 'ERROR', { 'en' => "Argument for terse mode must be one of 'dupe', 'keep', or 'both'." } ];
+				}
+				return undef;
+			},
+			'usage'          => { 'en' => <<EOF
+--terse=MODE               Use terse output; MODE controls what is shown:
+                           dupe -> only duplicate file paths
+                           keep -> only kept file paths
+                           both -> both types, prefixed with DUPE: or keep:
 EOF
 			}
 		},
@@ -4680,6 +4762,50 @@ sub CALL($@) {
 }
 
 
+# Get a reference to a command's function given its name
+#
+# Syntax of $call_path is the same as that used for ALIAS.
+#
+sub REFERENCE_TO($) {
+	my ( $call_path ) = @_;
+	
+	unless ( $call_path =~ /^
+	                        \{
+	                           (
+	                             (?: [a-zA-Z0-9_-]+ ) | 
+	                             (?:'[a-zA-Z0-9_-]+') | 
+	                             (?:"[a-zA-Z0-9_-]+") 
+	                           )
+	                        \}
+	                        \{
+	                           (
+	                             (?: [a-zA-Z0-9_-]+ ) | 
+	                             (?:'[a-zA-Z0-9_-]+') | 
+	                             (?:"[a-zA-Z0-9_-]+")  
+	                           )
+	                        \}
+	                        $/x ) {
+		print STDERR Localize( $STRINGS{'INTERNAL-ERROR'} ) . " " . Localize( $STRINGS{'invalid-call-path'} ) . " $call_path\n";
+		exit;
+	}
+	
+	my ( $command, $function ) = ( $1, $2 );
+	
+	# This function directly accesses the global commands datastructure.
+	
+	unless (
+	         ( exists  $AVAILABLE_COMMANDS{$command} ) && 
+	         ( exists  $AVAILABLE_COMMANDS{$command}{$function} ) &&
+	         ( defined $AVAILABLE_COMMANDS{$command}{$function} ) 
+	       ) {
+		print STDERR Localize( $STRINGS{'INTERNAL-ERROR'} ) . " " . Localize( $STRINGS{'invalid-call-path'} ) . " $call_path\n";
+		exit;
+	}
+	
+	return $AVAILABLE_COMMANDS{$command}{$function};
+}
+
+
 
 # ==============================================================================
 # === Basic file metadata support                                            ===
@@ -4729,6 +4855,7 @@ sub ComputeMD5($) {
 # name  => file's name
 sub AddToChecksumFile($$) {
 	my ($_md5sums, $_metadata) = @_;
+	return if ( -l File::Spec->catfile( $_metadata->{'directory'}, $_metadata->{'name'} ) );
 	push @{$$_md5sums{$$_metadata{md5}}}, $_metadata;
 }
 
@@ -4746,6 +4873,7 @@ sub WriteChecksumFile($$) {
 	print OUT "v2\n";
 	foreach my $md5 (keys %$_metadata) {
 		foreach my $_file (@{$$_metadata{$md5}}) {
+			next if ( $_file->{is_link} );
 			print OUT "$md5\t$$_file{mtime}\t$$_file{size}\t$$_file{name}\n";
 			LOG( "$md5\t$$_file{mtime}\t$$_file{size}\t$$_file{name}\n" );
 		}
@@ -5521,7 +5649,10 @@ sub ProcessDir($$$$$) {
 			
 			LOG( "old:  (md5:$old{$name}{md5}, mtime:$old{$name}{mtime}, size:$old{$name}{size})\n" );
 			
-			$new_count++ if (defined $old{$name});
+			$new_count++ if (
+			                  ( defined $old{$name} ) && 
+			                  ( ! -l File::Spec->catfile( $directory, $name ) )
+			                );
 			
 			if ( ! exists $extant{'file'}{$name} ) {
 				# *** Mot a regular file ***
@@ -5587,10 +5718,9 @@ sub ProcessDir($$$$$) {
 				# === Recompute checksums if needed ===
 				if ( 
 				       $compute_always || 
-				     ( $compute_missing && $old_metadata_missing )
-#				       $old_metadata_missing ||
-#				     ( $stat_mtime != $old_mtime ) || 
-#				     ( $stat_size != $old_size ) 
+				     ( $compute_missing && $old_metadata_missing ) ||
+				     ( $stat_mtime != $old_mtime ) || 
+				     ( $stat_size != $old_size ) 
 				   ) {
 					$md5 = ComputeMD5($filepath);
 					%metadata = ( md5=>$md5,      mtime=>$stat_mtime, size=>$stat_size, source=>'computed',  old_md5=>$old_md5,  old_md5_mtime=>$old_mtime,  old_md5_size=>$old_size,  md5_mtime=>$stat_mtime, md5_size=>$stat_size, path=>$directory, name=>$name, type=>$extant{'ALL'}{$name}, is_link=>$extant{'link'}{$name}, dev=>$stat_dev, ino=>$stat_ino );
