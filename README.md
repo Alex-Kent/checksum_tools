@@ -39,7 +39,7 @@ The full set of commands is:
 
 Use the `--help` option to view usage information for a specific command.  Use the `--help-core` for a list of core options (available in all commands).  Run `checksum_tool --help-all` for detailed usage information for all commands.
 
-Commands display their progress through the filesystem on `STDERR`; to suppress this use:
+Commands display their progress through the filesystem on `STDERR`; to suppress this use the `--quiet` option (`-q`).  To suppress all post-initialization output on `STDERR` use the `--silent` (`-Q`) option.  To suppress all `STDERR` output (even during initialization) use:
 
 > `COMMAND OPTIONS 2>/dev/null`
 
@@ -64,12 +64,17 @@ Options:
 
 ### cull_dupes
 
-`cull_dupes OBJECTS KEEP_DIRECTORY [ OPTIONS ]`
+`cull_dupes OBJECTS KEEP_DIRECTORY [ OPTIONS ]`  
+`cull_dupes OBJECTS KEEP_FILE [ OPTIONS ]`  
 `cull_dupes DIRECTORY [ OPTIONS ]`
 
 `OBJECTS` := `( FILE | DIRECTORY ) [ ... ]`
 
-Delete any files in `OBJECTS` that exist in `KEEP_DIRECTORY`.  When called with a single directory then delete any duplicate files in the directory (one copy is kept).
+This command can run in three modes:
+
+ - Delete any files in `OBJECTS` that exist in `KEEP_DIRECTORY`.
+ - Delete any files in `OBJECTS` that are the same as `KEEP_FILE`.
+ - When called with a single directory then delete any duplicate files in the directory (one copy is kept).
 
 Checksums will be computed and stored for all files that are missing them.
 
@@ -107,12 +112,17 @@ This operates the same as `find_dupes` except that all files determined to be du
 ---
 
 ### find_dupes
-`find_dupes OBJECTS REFERENCE_DIRECTORY [ OPTIONS ]`
+`find_dupes OBJECTS REFERENCE_DIRECTORY [ OPTIONS ]`  
+`find_dupes OBJECTS REFERENCE_FILE [ OPTIONS ]`  
 `find_dupes DIRECTORY [ OPTIONS ]`
 
 `OBJECTS` := `( FILE | DIRECTORY ) [ ... ]`
 
-Display any files in `OBJECTS` that exist in `REFERENCE_DIRECTORY`.  When called with a single directory then any duplicate files found in it are displayed.
+This command can run in three modes:
+
+ - Display any files in `OBJECTS` that exist in `REFERENCE_DIRECTORY`.
+ - Display any files in `OBJECTS` that are the same as `REFERENCE_FILE`.
+ - When  called with a single directory then any duplicate files found in it are displayed.
 
 Checksums will be computed and stored for all files that are missing them.
 
@@ -286,12 +296,17 @@ Missing file checksums will be computed unless the `--no-compute-missing` option
 
 ### link_dupes
 
-`link_dupes OBJECTS REFERENCE_DIRECTORY [ OPTIONS ]`
+`link_dupes OBJECTS REFERENCE_DIRECTORY [ OPTIONS ]`  
+`link_dupes OBJECTS REFERENCE_FILE [ OPTIONS ]`  
 `link_dupes DIRECTORY [ OPTIONS ]`
 
 `OBJECTS` := `( FILE | DIRECTORY ) [ ... ]`
 
-Replace any files in `OBJECTS` that exist in `REFERENCE_DIRECTORY` with links to the latter.  When called with a single directory then any duplicate files in the directory are linked to one of the copies.
+This command can run in three modes:
+
+ - Replace any files in `OBJECTS` that exist in `REFERENCE_DIRECTORY` with links to the latter.
+ - Replace any files in `OBJECTS` that are the same as `REFERENCE_FILE` with links to the latter.
+ - When called with a single directory then any duplicate files in the directory are linked to one of the copies.
 
 **Options:**
 
@@ -390,12 +405,17 @@ This command requires filesystem support for user-defined extended attributes.  
 ---
 
 ### symlink_dupes
-`symlink_dupes OBJECTS REFERENCE_DIRECTORY [ OPTIONS ]`
+`symlink_dupes OBJECTS REFERENCE_DIRECTORY [ OPTIONS ]`  
+`symlink_dupes OBJECTS REFERENCE_FILE [ OPTIONS ]`  
 `symlink_dupes DIRECTORY [ OPTIONS ]`
 
 `OBJECTS` := `( FILE | DIRECTORY ) [ ... ]`
 
-Replace any files in `OBJECTS` that exist in `REFERENCE_DIRECTORY` with symbolic links to the latter.  When called with a single directory then any duplicate files in the directory are symbolically linked to one of the copies.
+This command can run in three modes:
+
+ - Replace any files in `OBJECTS` that exist in `REFERENCE_DIRECTORY` with symbolic links to the latter.
+ - Replace any files in `OBJECTS` that are the same as `REFERENCE_FILE` with symbolic links to the latter.
+ - When called with a single directory then any duplicate files in the directory are symbolically linked to one of the copies.
 
 **Options:**
 

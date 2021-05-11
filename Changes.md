@@ -1,3 +1,12 @@
+v1.1.3 2021-05-11 Added quiet and silent options, minor improvements
+
+ - Added --quiet (-q) option that supresses progress messages.
+ - Added --silent (-Q) option that supresses all post-initialization STDERR output.
+ - Improved the string output when objects are entered (at head of ProcessDir).
+ - Command options can now utilize an initialize callback. (not currently used)
+ - find_dupes and find_orphans now accept a single file as their last object.  This can, e.g., be used to test for the presence a file in a set of files.
+ - All strings are now localized.
+
 v1.1.2 2021-05-11 Improved find_dupes, find_orphans, extended attribute and .md5sums writing
 
  - Removed symlinks, etc. from find_dupes : user-finalize-loop results.

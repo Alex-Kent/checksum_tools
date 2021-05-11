@@ -16,7 +16,7 @@ use strict;
 
 $| = 1;
 
-my $VERSION_STRING = '1.1.2';
+my $VERSION_STRING = '1.1.3';
 
 # Files to completely ignore
 my %ignore = map { $_ => 1 } ( '.md5sums', '.no_md5sums', '.img-md5sums', '.atom', '.DS_Store', '.directory', '.folder.png', 'Thumbs.db', 'Desktop.ini', 'BBThumbs.dat', '.DS_Store', 'swapfile' );
@@ -76,12 +76,13 @@ unless (@OBJECTS) {
 	exit;
 }
 
+
 # Variable to hold user-defined datastructure
 # The various commands can use this to store state during scans.
 my %user = ( );
 
 
-# === Call initialize callback ===
+# === Call command's initialize callback ===
 if ( defined $OPTIONS{'_COMMAND'}{'initialize'} ) {
 	#print "$OPTIONS{'_COMMAND'}{'initialize'}\n";
 	&{ $OPTIONS{'_COMMAND'}{'initialize'} }( \%user, \@OBJECTS, \%OPTIONS );
@@ -92,6 +93,12 @@ if ( defined $OPTIONS{'_COMMAND'}{'initialize'} ) {
 unless ( ( $OPTIONS{'_COMMAND'}{'phases'} == 1 ) || ( $OPTIONS{'_COMMAND'}{'phases'} == 2 ) ) {
 	print STDERR Localize( $STRINGS{'INTERNAL-ERROR'} ) . " " . Localize( $STRINGS{'phases-not-specified'} ) . "\n";
 	exit;
+}
+
+
+# === Initialization done, suppress STDERR if requested ===
+if ( $OPTIONS{'silent'} ) {
+	open STDERR, '>', File::Spec->devnull(); # or die "could not open STDERR: $!\n";
 }
 
 
@@ -357,13 +364,27 @@ EOF
 		
 		'run-help-to-see-options' => { 'en' => "Run $0 --help to see a list of supported options." },
 		
+		'Option' => { 'en' => "Option" },
+		
+		'parameter-taker-not-last' => { 'en' => "taking an additional parameter isn't last in combined short option list" },
+		
+		'parameter-not-found' => { 'en' => "expected an additional parameter but no arguments remain" },
+		
 		'no-command-specified' => { 'en' => "No command specified." },
 		
 		'multiple-commands-given' => { 'en' => "Only one command can be specified." },
 		
 		'no-objects-specified' => { 'en' => "No objects (files or directories) specified." },
 		
+		'Phase' => { 'en' => "Phase" },
+		
+		'processing' => { 'en' => "processing" },
+		
 		'has-no-md5sums' => { 'en' => "Not processing directory (has .no_md5sums file)" },
+		
+		'computing-checksum' => { 'en' => "Computing MD5 checksum for" },
+		
+		'unable-to-open' => { 'en' => "Can't open" },
 		
 		'invalid-escape-encoding' => { 'en' => "Unknown format for EscapeString:" },
 		
@@ -852,6 +873,12 @@ symlink-dupes                 @{[ Localize( $$_AVAILABLE_COMMANDS{'symlink_dupes
 checksum_tool --link-dupes    @{[ Localize( $$_AVAILABLE_COMMANDS{'link_dupes'}{'syntax'}[1] ) ]}
 checksum_tool -S              @{[ Localize( $$_AVAILABLE_COMMANDS{'link_dupes'}{'syntax'}[1] ) ]}
 link-dupes                    @{[ Localize( $$_AVAILABLE_COMMANDS{'link_dupes'}{'syntax'}[1] ) ]}
+checksum_tool --symlink-dupes @{[ Localize( $$_AVAILABLE_COMMANDS{'symlink_dupes'}{'syntax'}[2] ) ]}
+checksum_tool -s              @{[ Localize( $$_AVAILABLE_COMMANDS{'symlink_dupes'}{'syntax'}[2] ) ]}
+symlink-dupes                 @{[ Localize( $$_AVAILABLE_COMMANDS{'symlink_dupes'}{'syntax'}[2] ) ]}
+checksum_tool --link-dupes    @{[ Localize( $$_AVAILABLE_COMMANDS{'link_dupes'}{'syntax'}[2] ) ]}
+checksum_tool -S              @{[ Localize( $$_AVAILABLE_COMMANDS{'link_dupes'}{'syntax'}[2] ) ]}
+link-dupes                    @{[ Localize( $$_AVAILABLE_COMMANDS{'link_dupes'}{'syntax'}[2] ) ]}
 
 EOF
 			
@@ -862,9 +889,14 @@ EOF
 			print Localize( { 'en' => <<EOF
 OBJECTS := ( FILE | DIRECTORY ) [ ... ]
 
-Replace any files in OBJECTS that exist in REFERENCE_DIRECTORY with links to 
-the latter.  When called with a single directory then any duplicate files in 
-the directory are linked to one of the copies.
+This command can run in three modes:
+
+ • Replace any files in OBJECTS that exist in REFERENCE_DIRECTORY with links 
+   to the latter.
+ • Replace any files in OBJECTS that are the same as REFERENCE_FILE with links 
+   to the latter.
+ • When called with a single directory then any duplicate files in the 
+   directory are linked to one of the copies.
 
 If --link-dupes is given then hard links will be used whenever possible; if this
 cannot be done (e.g. cross-device links) then symbolic links will be used.  If 
@@ -1657,6 +1689,7 @@ EOF
 			                         'recurse', 'no-recurse', 'one-filesystem' ],
 			'syntax' => [
 				{ 'en' => 'OBJECTS KEEP_DIRECTORY [ OPTIONS ]' },
+				{ 'en' => 'OBJECTS KEEP_FILE [ OPTIONS ]' },
 				{ 'en' => 'DIRECTORY [ OPTIONS ]' }
 			], 
 			'usage' => { 'en' => <<EOF
@@ -1666,9 +1699,12 @@ EOF
 			'usage_long' => { 'en' => <<EOF
 OBJECTS := ( FILE | DIRECTORY ) [ ... ]
 
-Delete any files in OBJECTS that exist in KEEP_DIRECTORY.  When called with a 
-single directory then delete any duplicate files in the directory (one copy is
-kept).
+This command can run in three modes:
+
+ • Delete any files in OBJECTS that exist in KEEP_DIRECTORY.
+ • Delete any files in OBJECTS that are the same as KEEP_FILE.
+ • When called with a single directory then delete any duplicate files in the 
+   directory (one copy is kept).
 
 Checksums will be computed and stored for all files that are missing them.
 
@@ -1791,6 +1827,7 @@ ALIAS	'user-finalize-loop' => '{find_dupes}{user-finalize-loop}',
 			                         'recurse', 'no-recurse', 'one-filesystem' ],
 			'syntax' => [
 				{ 'en' => 'OBJECTS REFERENCE_DIRECTORY [ OPTIONS ]' }, 
+				{ 'en' => 'OBJECTS REFERENCE_FILE [ OPTIONS ]' }, 
 				{ 'en' => 'DIRECTORY [ OPTIONS ]' }
 			], 
 			'usage' => { 'en' => <<EOF
@@ -1799,6 +1836,13 @@ EOF
 			},
 			'usage_long' => { 'en' => <<EOF
 OBJECTS := ( FILE | DIRECTORY ) [ ... ]
+
+This command can run in three modes:
+
+ • Display any files in OBJECTS that exist in REFERENCE_DIRECTORY.
+ • Display any files in OBJECTS that are the same as REFERENCE_FILE.
+ • When called with a single directory then any duplicate files found in it 
+   are displayed.
 
 Display any files in OBJECTS that exist in REFERENCE_DIRECTORY.  When called 
 with a single directory then any duplicate files found in it are displayed.
@@ -1861,11 +1905,7 @@ EOF
 					
 				} else {
 					
-					unless ( -d $$_OBJECTS[-1] ) {
-						print STDERR Localize( $STRINGS{'ERROR'} ) . " " . 
-						             Localize( { 'en' => "In multi-object mode the final argument must be a directory." } ) . "\n";
-						exit;
-					}
+					# This previously required the last object to be a directory.
 					
 					$$_OPTIONS{'_COMMAND'}{'phases'} = 2;
 				}
@@ -2202,19 +2242,13 @@ EOF
 			'initialize' => sub {
 				my ( $_user, $_OBJECTS, $_OPTIONS ) = @_;
 				
+				# In multi-object mode this previously required the last object to be a directory.
+				
 				if ( scalar(@$_OBJECTS) == 1 ) {
 					
 					print STDERR Localize( $STRINGS{'ERROR'} ) . " " . 
 					             Localize( { 'en' => "find_orphans mode requires at least two objects to be specified." } ) . "\n";
 					exit;
-					
-				} else {
-					
-					unless ( -d $$_OBJECTS[-1] ) {
-						print STDERR Localize( $STRINGS{'ERROR'} ) . " " . 
-						             Localize( { 'en' => "The final argument must be a directory." } ) . "\n";
-						exit;
-					}
 				}
 				
 				$$_OPTIONS{'compute-missing'} = 1 unless defined ($$_OPTIONS{'compute-missing'});
@@ -2644,6 +2678,7 @@ EOF
 			                         'recurse', 'no-recurse', 'one-filesystem' ],
 			'syntax' => [
 				{ 'en' => 'OBJECTS REFERENCE_DIRECTORY [ OPTIONS ]' },
+				{ 'en' => 'OBJECTS REFERENCE_FILE [ OPTIONS ]' },
 				{ 'en' => 'DIRECTORY [ OPTIONS ]' }
 			], 
 			'usage' => { 'en' => <<EOF
@@ -2654,9 +2689,14 @@ EOF
 			'usage_long' => { 'en' => <<EOF
 OBJECTS := ( FILE | DIRECTORY ) [ ... ]
 
-Replace any files in OBJECTS that exist in REFERENCE_DIRECTORY with links to 
-the latter.  When called with a single directory then any duplicate files in 
-the directory are linked to one of the copies.
+This command can run in three modes:
+
+ • Replace any files in OBJECTS that exist in REFERENCE_DIRECTORY with links 
+   to the latter.
+ • Replace any files in OBJECTS that are the same as REFERENCE_FILE with links 
+   to the latter.
+ • When called with a single directory then any duplicate files in the 
+   directory are linked to one of the copies.
 
 Hard links will be used whenever possible; if this cannot be done (e.g. cross-
 device links) then symbolic links will be used.  When symbolic links are used, 
@@ -3089,6 +3129,7 @@ EOF
 			                         'recurse', 'no-recurse', 'one-filesystem' ],
 			'syntax' => [
 				{ 'en' => 'OBJECTS REFERENCE_DIRECTORY [ OPTIONS ]' },
+				{ 'en' => 'OBJECTS REFERENCE_FILE [ OPTIONS ]' },
 				{ 'en' => 'DIRECTORY [ OPTIONS ]' }
 			], 
 			'usage' => { 'en' => <<EOF
@@ -3098,9 +3139,14 @@ EOF
 			'usage_long' => { 'en' => <<EOF
 OBJECTS := ( FILE | DIRECTORY ) [ ... ]
 
-Replace any files in OBJECTS that exist in REFERENCE_DIRECTORY with symbolic 
-links to the latter.  When called with a single directory then any duplicate 
-files in the directory are symbolically linked to one of the copies.
+This command can run in three modes:
+
+ • Replace any files in OBJECTS that exist in REFERENCE_DIRECTORY with 
+   symbolic links to the latter.
+ • Replace any files in OBJECTS that are the same as REFERENCE_FILE with 
+   symbolic links to the latter.
+ • When called with a single directory then any duplicate files in the 
+   directory are symbolically linked to one of the copies.
 
 Relative links are used if the file being pointed by the link to has a relative 
 path and absolute links are used if the file being pointed to has an absolute 
@@ -3997,6 +4043,34 @@ EOF
 			}
 		},
 		
+		# === quiet ===
+		'quiet' => { 
+			'short'          => '-q', 
+			'long'           => '--quiet', 
+			'core-option'    => 1,
+			'default'        => undef,
+			'takes-arg'      => 0,
+			'error-check'    => undef,
+			'usage'          => { 'en' => <<EOF
+-q | --quiet               Suppress progress messages
+EOF
+			}
+		},
+		
+		# === silent ===
+		'silent' => { 
+			'short'          => '-Q', 
+			'long'           => '--silent', 
+			'core-option'    => 1,
+			'default'        => undef,
+			'takes-arg'      => 0,
+			'error-check'    => undef,
+			'usage'          => { 'en' => <<EOF
+-Q | --silent              Don't write anything to STDERR
+EOF
+			}
+		},
+		
 		# === recurse ===
 		'recurse' => { 
 			'short'          => '-r', 
@@ -4188,7 +4262,7 @@ sub GetOptions($$$$$$$) {
 		my @split;
 		
 		# Handle parameters included with the option
-		if ( $arg =~ /^([^=]+)=(.+)$/ ) {
+		if ( $arg =~ /^([^=]+)=(.*)$/ ) {
 			$arg = $1;
 			unshift @$_ARGV, $2;
 		}
@@ -4224,14 +4298,28 @@ sub GetOptions($$$$$$$) {
 				# Make sure we're not in the midst of combined options
 				if ( @split ) {
 					# not at the end of a combined command
-					print STDERR "ERROR: Option $arg taking an additional parameter isn't last in combined short option list\n";
+					
+					# Option taking an additional parameter isn't last in combined short option list
+					print STDERR Localize( $STRINGS{'ERROR'} ) . 
+					             " " . 
+					             Localize( $STRINGS{'Option'} ) . 
+					             " $arg " . 
+					             Localize( $STRINGS{'parameter-taker-not-last'} ) . 
+					             "\n";
 					exit;
 				}
 				
 				# Make sure we're not at the end of the commandline
 				unless ( @$_ARGV ) {
 					# not at the end of a combined command
-					print STDERR "ERROR: Option $arg expected an additional parameter but no arguments remain\n";
+					
+					# Option expected an additional parameter but no arguments remain
+					print STDERR Localize( $STRINGS{'ERROR'} ) . 
+					             " " . 
+					             Localize( $STRINGS{'Option'} ) . 
+					             " $arg " . 
+					             Localize( $STRINGS{'parameter-not-found'} ) . 
+					             "\n";
 					exit;
 				}
 				
@@ -4261,7 +4349,14 @@ sub GetOptions($$$$$$$) {
 				# Make sure we're not at the end of the commandline
 				unless ( @$_ARGV ) {
 					# not at the end of a combined command
-					print STDERR "ERROR: Option $arg expected an additional parameter but no arguments remain\n";
+					
+					# Option expected an additional parameter but no arguments remain
+					print STDERR Localize( $STRINGS{'ERROR'} ) . 
+					             " " . 
+					             Localize( $STRINGS{'Option'} ) . 
+					             " $arg " . 
+					             Localize( $STRINGS{'parameter-not-found'} ) . 
+					             "\n";
 					exit;
 				}
 				
@@ -4529,11 +4624,42 @@ sub GetOptions($$$$$$$) {
 	
 	# Loop through options...
 	foreach my $option ( sort keys %$_OPTIONS ) {
+		
 		if ( ( exists $$_AVAILABLE_OPTIONS{ $option } ) &&
 		     ( defined $$_AVAILABLE_OPTIONS{ $option }{ 'error-check' } ) ) {
 			
 			#print "Calling error-check for $option\n";
 			my $_exceptions = &{ $$_AVAILABLE_OPTIONS{ $option }{ 'error-check' } }( $$_OPTIONS{'COMMAND'}, $option, $_OPTIONS, $_OBJECTS );
+			
+			if ( ref $_exceptions ) {
+				# Exceptions were found
+				
+				# Loop through exceptions...
+				while ( @$_exceptions ) {
+					my $type = shift @$_exceptions;
+					my $message = shift @$_exceptions;
+					
+					$fatal = 1 if ( $type eq 'ERROR' );
+					
+					print STDERR Localize( $$_STRINGS{$type} ) . " " . Localize( $message ) . "\n";
+				}
+				
+			}
+		}
+	}
+	
+	exit if ($fatal);
+	
+	
+	# === Run options' initialization code (initialize) ===
+	# Loop through options...
+	foreach my $option ( sort keys %$_OPTIONS ) {
+		
+		if ( ( exists $$_AVAILABLE_OPTIONS{ $option } ) &&
+		     ( defined $$_AVAILABLE_OPTIONS{ $option }{ 'initialize' } ) ) {
+			
+			#print "Calling error-check for $option\n";
+			my $_exceptions = &{ $$_AVAILABLE_OPTIONS{ $option }{ 'initialize' } }( $$_OPTIONS{'COMMAND'}, $option, $_OPTIONS, $_OBJECTS );
 			
 			if ( ref $_exceptions ) {
 				# Exceptions were found
@@ -4853,11 +4979,17 @@ sub StatFile($) {
 
 
 # === Compute MD5 checksum of file's content ===
-sub ComputeMD5($) {
-	my ($path) = @_;
-	print STDERR "Computing MD5 checksum for '$path'\n";
+sub ComputeMD5($$$) {
+	my ($path, $_OPTIONS, $_STRINGS) = @_;
+	
+	unless ( $$_OPTIONS{quiet} ) {
+		print STDERR Localize( $STRINGS{'NOTE'} ) . " " . Localize( $$_STRINGS{'computing-checksum'} ) . " '$path'\n"; 
+	}
+	
 	unless ( open(FILE, "<", $path) ) {
-		print STDERR "Warning: Can't open '$path': $!\n";
+		unless ( $$_OPTIONS{quiet} ) {
+			print STDERR Localize( $STRINGS{'WARNING'} ) . " " . Localize( $$_STRINGS{'unable-to-open'} ) . " '$path': $!\n"; 
+		}
 		return undef;
 	}
 	binmode(FILE);
@@ -5640,7 +5772,7 @@ sub ReadChecksumsFile($$$$) {
 
 # === Get object's metadata ===
 # Called only by ProcessDir
-sub GatherMetadata($$$$$$$$$) {
+sub GatherMetadata($$$$$$$$$$) {
 	my ( 
 	                                # IN:
 	     $directory,                # Current directory's path
@@ -5648,6 +5780,7 @@ sub GatherMetadata($$$$$$$$$) {
 	     $_old,                     # Contents of the exisiting .md5sums file
 	     $never_rewrite_checksums,  # Set to true if .md5sums file should never be rewritten
 	     $_OPTIONS,                 # Global options datastructure
+	     $_STRINGS,                 # Localized strings datastructure
 	                                # 
 	                                # OUT:
 	     $_new_count,               # Will be set to number of checksummable objects in current directory
@@ -5705,7 +5838,7 @@ sub GatherMetadata($$$$$$$$$) {
 			if ( $compute_always || $compute_missing ) {
 				# Checksums recompute requested
 				if ( ( ! -l $filepath ) && ( -f $filepath) ) {
-					my $md5 = ComputeMD5($filepath);
+					my $md5 = ComputeMD5($filepath, $_OPTIONS, $_STRINGS);
 					%metadata = ( md5=>$md5,      mtime=>$stat_mtime, size=>$stat_size, source=>'computed',  old_md5=>undef,  old_md5_mtime=>undef,  old_md5_size=>undef,  md5_mtime=>$stat_mtime, md5_size=>$stat_size, path=>$directory, name=>$name, type=>$$_extant{'ALL'}{$name}, is_link=>$$_extant{'link'}{$name}, dev=>$stat_dev, ino=>$stat_ino );
 					$write_xa = 1;
 				} else {
@@ -5775,7 +5908,7 @@ sub GatherMetadata($$$$$$$$$) {
 			     ( $stat_mtime != $old_mtime ) || 
 			     ( $stat_size != $old_size ) 
 			   ) {
-				$md5 = ComputeMD5($filepath);
+				$md5 = ComputeMD5($filepath, $_OPTIONS, $_STRINGS);
 				%metadata = ( md5=>$md5,      mtime=>$stat_mtime, size=>$stat_size, source=>'computed',  old_md5=>$old_md5,  old_md5_mtime=>$old_mtime,  old_md5_size=>$old_size,  md5_mtime=>$stat_mtime, md5_size=>$stat_size, path=>$directory, name=>$name, type=>$$_extant{'ALL'}{$name}, is_link=>$$_extant{'link'}{$name}, dev=>$stat_dev, ino=>$stat_ino );
 				$$_force_rewrite = 1;
 				$write_xa = 1;
@@ -5906,8 +6039,11 @@ sub CallDirectoryLeaveCallback($$$$) {
 #     Returns the value returned by the directory leave callback
 sub ProcessDir($$$$$) {
 	my ($phase, $object, $_user, $_OPTIONS, $_STRINGS) = @_;
-	print STDERR "ProcessDir($phase, $object, $_user, $_OPTIONS, $_STRINGS)\n"; 
+	#print STDERR "ProcessDir($phase, $object, $_user, $_OPTIONS, $_STRINGS)\n"; 
 	LOG( "ProcessDir($phase, $object, $_user, $_OPTIONS, $_STRINGS)\n" ); 
+	unless ( $$_OPTIONS{quiet} ) {
+		print STDERR Localize( $STRINGS{'NOTE'} ) . " " . Localize( $$_STRINGS{'Phase'} ) . " $phase, " .Localize( $$_STRINGS{'processing'} ) . " $object\n"; 
+	}
 	
 	# *** Find files and subdirctories in current directory (or mininimal set in single-object mode) ***
 	
@@ -5934,7 +6070,9 @@ sub ProcessDir($$$$$) {
 	if ( $$_OPTIONS{'skip-if-no_md5sums-present'} ) {
 		# === Don't process directry if it has a .no_md5sums file ===
 		if ( $no_scan ) {
-			print STDERR Localize( $$_STRINGS{'has-no-md5sums'} ) . "\n";
+			unless ( $$_OPTIONS{quiet} ) {
+				print STDERR Localize( $STRINGS{'NOTE'} ) . " " . Localize( $$_STRINGS{'has-no-md5sums'} ) . "\n";
+			}
 			
 			goto return_from_scan;
 		}
@@ -5984,6 +6122,7 @@ sub ProcessDir($$$$$) {
 		                \%old,                     # Contents of the exisiting .md5sums file
 		                $never_rewrite_checksums,  # Set to true if .md5sums file should never be rewritten
 		                $_OPTIONS,                 # Global options datastructure
+		                $_STRINGS,                 # Localized strings datastructure
 		                                           #
 		                                           # OUT:
 		                \$new_count,               # Will be set to number of checksummable objects in current directory
