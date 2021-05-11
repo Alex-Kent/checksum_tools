@@ -1,3 +1,10 @@
+v1.1.2 2021-05-11 Improved find_dupes, find_orphans, extended attribute and .md5sums writing
+
+ - Removed symlinks, etc. from find_dupes : user-finalize-loop results.
+ - Removed symlinks, etc. from find_orphans : user-finalize-loop results.
+ - Improved heuristic used to determine if checksums are written to .md5sums.
+ - Extended attributes can now be written to write-protected files (permissions are temporarily made writable).
+
 v1.1.1 2021-05-10 Refactored ProcessDir, minor tweaks and bug fixes
 
  - Refactored ProcessDir by moving logical sections into subroutines.

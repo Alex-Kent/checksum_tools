@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 
-# checksum_tools v1.0.0 © 2021 Alexander Hajnal
+# checksum_tools © 2021 Alexander Hajnal
 # 
 # This program is licensed under version 3 of the GNU Affero General Public 
 # License.  See the LICENSE file to view the full text of the license.
@@ -16,7 +16,7 @@ use strict;
 
 $| = 1;
 
-my $VERSION_STRING = '1.1.1';
+my $VERSION_STRING = '1.1.2';
 
 # Files to completely ignore
 my %ignore = map { $_ => 1 } ( '.md5sums', '.no_md5sums', '.img-md5sums', '.atom', '.DS_Store', '.directory', '.folder.png', 'Thumbs.db', 'Desktop.ini', 'BBThumbs.dat', '.DS_Store', 'swapfile' );
@@ -1578,7 +1578,11 @@ EOF
 			'skip-if-no_md5sums-present' => 1,
 			
 			# *** clear_checksums  :  initialize ***
-			'initialize' => undef,
+			'initialize' => sub {
+				my ( $_user, $_OBJECTS, $_OPTIONS ) = @_;
+				$$_OPTIONS{'compute-missing'}  = 0;  # Checksums should not be computed
+				$$_OPTIONS{'discard-existing'} = 1;  # Any existing checksums should be discarded
+			},
 			
 			# *** clear_checksums  :  phase-1-per-tree-pre ***
 			'phase-1-per-tree-pre' => undef,
@@ -1970,7 +1974,9 @@ EOF
 							my @tmp = ();
 							foreach my $file (@{$$src{$md5}}) {
 								next if ($ignore{$file->{name}});
-								next if ( -l File::Spec->catfile( $file->{'directory'}, $file->{'name'} ) );
+								my $fullpath = File::Spec->catfile( $file->{'directory'}, $file->{'name'} );
+								next if ( -l $fullpath );
+								next unless ( -f $fullpath );
 								push @tmp, $file;
 							}
 							my $last = scalar @tmp;
@@ -2010,13 +2016,17 @@ EOF
 							
 							my @non_link_src = ();
 							foreach my $file (@{$$src{$md5}}) {
-								next if ( -d File::Spec->catfile( $file->{'directory'}, $file->{'name'} ) );
+								my $fullpath = File::Spec->catfile( $file->{'directory'}, $file->{'name'} );
+								next if ( -l $fullpath );
+								next unless ( -f $fullpath );
 								push @non_link_src, $file;
 							}
 							
 							my @non_link_dst = ();
 							foreach my $file (@{$$dst{$md5}}) {
-								next if ( -l File::Spec->catfile( $file->{'directory'}, $file->{'name'} ) );
+								my $fullpath = File::Spec->catfile( $file->{'directory'}, $file->{'name'} );
+								next if ( -l $fullpath );
+								next unless ( -f $fullpath );
 								push @non_link_dst, $file;
 							}
 							
@@ -2266,7 +2276,9 @@ ALIAS	'phase-2-per-object' => '{find_dupes}{phase-2-per-object}',
 						# === Add all files in source directory that have the checksum ===
 						# === to the list of orphaned files ===
 						foreach my $file (@{$$src{$key}}) {
-							next if ( -l File::Spec->catfile( $file->{'directory'}, $file->{'name'} ) );
+							my $fullpath = File::Spec->catfile( $file->{'directory'}, $file->{'name'} );
+							next if ( -l $fullpath );
+							next unless ( -f $fullpath );
 							#push @orphans, [ $file->{directory}, $file->{name}, $key ];
 							my $enc_dir  = ( $$_OPTIONS{'escape-filenames'} )  ?  EscapeString( $file->{directory}, $$_OPTIONS{'escape-filenames'}  )  :  $file->{directory};
 							my $enc_file = ( $$_OPTIONS{'escape-filenames'} )  ?  EscapeString( $file->{name},      $$_OPTIONS{'escape-filenames'}  )  :  $file->{name};
@@ -2284,7 +2296,9 @@ ALIAS	'phase-2-per-object' => '{find_dupes}{phase-2-per-object}',
 						# === Add all files in destination directory that have the checksum ===
 						# === to the list of orphaned files ===
 						foreach my $file (sort @{$$dst{$key}}) {
-							next if ( -l File::Spec->catfile( $file->{'directory'}, $file->{'name'} ) );
+							my $fullpath = File::Spec->catfile( $file->{'directory'}, $file->{'name'} );
+							next if ( -l $fullpath );
+							next unless ( -f $fullpath );
 							#push @orphans, [ $dir, $file->{name}, $key ];
 							my $enc_dir  = ( $$_OPTIONS{'escape-filenames'} )  ?  EscapeString( $file->{directory}, $$_OPTIONS{'escape-filenames'}  )  :  $file->{directory};
 							my $enc_file = ( $$_OPTIONS{'escape-filenames'} )  ?  EscapeString( $file->{name},      $$_OPTIONS{'escape-filenames'}  )  :  $file->{name};
@@ -4870,7 +4884,9 @@ sub ComputeMD5($) {
 # name  => file's name
 sub AddToChecksumFile($$) {
 	my ($_md5sums, $_metadata) = @_;
-	return if ( -l File::Spec->catfile( $_metadata->{'directory'}, $_metadata->{'name'} ) );
+	my $fullpath = File::Spec->catfile( $_metadata->{'path'}, $_metadata->{'name'} );
+	return if ( -l $fullpath );
+	return unless ( -f $fullpath );
 	push @{$$_md5sums{$$_metadata{md5}}}, $_metadata;
 }
 
@@ -4976,7 +4992,19 @@ sub WriteXA($$$) {
 	
 	# Version 2
 	unless ( $$_OPTIONS{'never-rewrite-checksums'} ) {
+		my $writable = 0222;
+		my $mode = ( stat $filepath )[2] & 07777;
+		my $is_writable = ( $mode & $writable );
+		
+		unless ( $is_writable ) {
+			chmod $mode | $writable, $filepath;
+		}
+		
 		setfattr( $filepath, '_', "$$_metadata{md5}:$$_metadata{mtime}:$$_metadata{size}", { namespace => 'user' } );
+		
+		unless ( $is_writable ) {
+			chmod $mode, $filepath;
+		}
 	}
 }
 
@@ -5636,7 +5664,7 @@ sub GatherMetadata($$$$$$$$$) {
 	my $discard_checksums =  ( ! $compute_missing )  &&      $discard_existing   ;  # Always discard
 	my $use_existing      =  ( ! $compute_missing )  &&  ( ! $discard_existing ) ;  # Use existing, only recompute if changed
 	
-	my $filepath = "$directory/$name";
+	my $filepath = File::Spec->catfile( $directory, $name );
 	LOG( "Checking $filepath\n" );
 	#print "Checking $filepath\n";
 	
@@ -5658,8 +5686,11 @@ sub GatherMetadata($$$$$$$$$) {
 		
 		$$_new_count++ if (
 		                  ( defined $$_old{$name} ) && 
-		                  ( ! -l File::Spec->catfile( $directory, $name ) )
+		                  ( ! -l $filepath ) &&
+		                  (   -f $filepath )
 		                );
+		
+		my $write_xa = 0;
 		
 		if ( ! exists $$_extant{'file'}{$name} ) {
 			# *** Mot a regular file ***
@@ -5671,12 +5702,23 @@ sub GatherMetadata($$$$$$$$$) {
 			# *** Always discard checksums ***
 			LOG( "*** Discarding checksums ***\n" );
 			
-			# Checksum discard requested so, null out the checksum
-			%metadata = ( md5=>undef, mtime=>$stat_mtime, size=>$stat_size, path=>$directory, name=>$name, type=>$$_extant{'ALL'}{$name}, is_link=>$$_extant{'link'}{$name}, dev=>$stat_dev, ino=>$stat_ino );
+			if ( $compute_always || $compute_missing ) {
+				# Checksums recompute requested
+				if ( ( ! -l $filepath ) && ( -f $filepath) ) {
+					my $md5 = ComputeMD5($filepath);
+					%metadata = ( md5=>$md5,      mtime=>$stat_mtime, size=>$stat_size, source=>'computed',  old_md5=>undef,  old_md5_mtime=>undef,  old_md5_size=>undef,  md5_mtime=>$stat_mtime, md5_size=>$stat_size, path=>$directory, name=>$name, type=>$$_extant{'ALL'}{$name}, is_link=>$$_extant{'link'}{$name}, dev=>$stat_dev, ino=>$stat_ino );
+					$write_xa = 1;
+				} else {
+					%metadata = ( md5=>undef, mtime=>$stat_mtime, size=>$stat_size, path=>$directory, name=>$name, type=>$$_extant{'ALL'}{$name}, is_link=>$$_extant{'link'}{$name}, dev=>$stat_dev, ino=>$stat_ino );
+				}
+			} else {
+				# Checksum discard requested so, null out the checksum
+				%metadata = ( md5=>undef, mtime=>$stat_mtime, size=>$stat_size, path=>$directory, name=>$name, type=>$$_extant{'ALL'}{$name}, is_link=>$$_extant{'link'}{$name}, dev=>$stat_dev, ino=>$stat_ino );
+			}
 			
 			$$_force_rewrite = 1;
 			unless ( $never_rewrite_checksums ) {
-				ClearXA($filepath, $_OPTIONS );
+				ClearXA( $filepath, $_OPTIONS );
 			}
 			
 		} else {
@@ -5705,6 +5747,7 @@ sub GatherMetadata($$$$$$$$$) {
 				LOG( "=== MD5, date, and size in md5sums ===\n" );
 				( $old_md5, $old_mtime, $old_size, $old_source ) = ( $$_old{$name}{md5}, $$_old{$name}{mtime}, $$_old{$name}{size}, 'md5sums' );
 				$old_metadata_missing = 0;
+				$write_xa = 1;
 				
 			} elsif (defined $xa_md5) {
 				# === MD5 in extended attributes ===
@@ -5717,9 +5760,12 @@ sub GatherMetadata($$$$$$$$$) {
 				LOG( "*** MD5 in md5sums ***\n" );
 				( $old_md5, $old_mtime, $old_size, $old_source ) = ( $$_old{$name}{md5}, undef, undef, 'md5sums' );
 				$old_metadata_missing = 1;
+				$write_xa = 1;
 				
 			} else {
+				%metadata = ( md5=>$old_md5,  mtime=>$stat_mtime, size=>$stat_size, source=>$old_source, md5_mtime=>$old_mtime,  md5_size=>$old_size,  path=>$directory, name=>$name, type=>$$_extant{'ALL'}{$name}, is_link=>$$_extant{'link'}{$name}, dev=>$stat_dev, ino=>$stat_ino );
 				$old_metadata_missing = 1;
+				$write_xa = 1;
 			}
 			
 			# === Recompute checksums if needed ===
@@ -5732,17 +5778,22 @@ sub GatherMetadata($$$$$$$$$) {
 				$md5 = ComputeMD5($filepath);
 				%metadata = ( md5=>$md5,      mtime=>$stat_mtime, size=>$stat_size, source=>'computed',  old_md5=>$old_md5,  old_md5_mtime=>$old_mtime,  old_md5_size=>$old_size,  md5_mtime=>$stat_mtime, md5_size=>$stat_size, path=>$directory, name=>$name, type=>$$_extant{'ALL'}{$name}, is_link=>$$_extant{'link'}{$name}, dev=>$stat_dev, ino=>$stat_ino );
 				$$_force_rewrite = 1;
-				unless ( $never_rewrite_checksums ) {
-					WriteXA($filepath, \%metadata, $_OPTIONS );
-				}
+				$write_xa = 1;
 			} else {
 				# Use existing metadata
 				%metadata = ( md5=>$old_md5,  mtime=>$stat_mtime, size=>$stat_size, source=>$old_source, md5_mtime=>$old_mtime,  md5_size=>$old_size,  path=>$directory, name=>$name, type=>$$_extant{'ALL'}{$name}, is_link=>$$_extant{'link'}{$name}, dev=>$stat_dev, ino=>$stat_ino );
 			}
 			
-			AddToChecksumFile($_md5sums, { %metadata } );
-			
 		} # === END - Normal case ===
+		
+		if ( $write_xa ) {
+			unless ( $never_rewrite_checksums ) {
+				LOG( "Writing extended attributes\n" );
+				WriteXA($filepath, \%metadata, $_OPTIONS );
+			}
+		}
+		
+		AddToChecksumFile($_md5sums, { %metadata } );
 		
 	} # === END - Use checksums ===
 	

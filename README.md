@@ -1,6 +1,6 @@
 # Checksum tools
 
-checksum_tools v1.0.0 &copy; 2021 Alexander Hajnal
+checksum_tools &copy; 2021 Alexander Hajnal
 
 ---
 
