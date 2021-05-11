@@ -1,3 +1,9 @@
+v1.1.1 2021-05-10 Refactored ProcessDir, minor tweaks and bug fixes
+
+ - Refactored ProcessDir by moving logical sections into subroutines.
+ - Changed directory leave callback to get the name of the object that ProcessDir was called with, not the directory path was the case previously.
+ - Renamed $CURRENT_VERSION to $CURRENT_CHECKSUM_FILE_VERSION.
+
 v1.1.0 2021-05-10 Additional output formats, minor changes, additions, and bug fixes.
 
  - Added `show-all-checksums` output mode.

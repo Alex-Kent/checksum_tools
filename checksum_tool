@@ -16,14 +16,14 @@ use strict;
 
 $| = 1;
 
-my $VERSION_STRING = '1.1.0';
+my $VERSION_STRING = '1.1.1';
 
 # Files to completely ignore
 my %ignore = map { $_ => 1 } ( '.md5sums', '.no_md5sums', '.img-md5sums', '.atom', '.DS_Store', '.directory', '.folder.png', 'Thumbs.db', 'Desktop.ini', 'BBThumbs.dat', '.DS_Store', 'swapfile' );
 my %ignore_dirs = map { $_ => 1 } ( '.xvpics', '.pics', '.AppleDouble' );
 
 # Current checksum file version number
-my $CURRENT_VERSION = 2;
+my $CURRENT_CHECKSUM_FILE_VERSION = 2;
 
 use File::Basename;            # For basename, dirname, fileparse
 use Digest::MD5;               # For hexdigest
@@ -1969,7 +1969,9 @@ EOF
 							# === Gather the filenames, culling ignored filenames ===
 							my @tmp = ();
 							foreach my $file (@{$$src{$md5}}) {
-								push @tmp, $file unless ($ignore{$file->{name}});
+								next if ($ignore{$file->{name}});
+								next if ( -l File::Spec->catfile( $file->{'directory'}, $file->{'name'} ) );
+								push @tmp, $file;
 							}
 							my $last = scalar @tmp;
 							if (scalar @tmp > 1) {
@@ -1977,7 +1979,6 @@ EOF
 								# === so display their checksum, names, and paths ===
 								my $shown_md5 = $md5;
 								foreach my $file (reverse @tmp) {
-									next if ( -l File::Spec->catfile( $file->{'directory'}, $file->{'name'} ) );
 									&$encode_filename($file);
 									if ($this == $last) {
 										&{ $keep_callback }( $md5, $shown_md5, $file, $_user, $_OPTIONS );
@@ -2006,21 +2007,35 @@ EOF
 						if (defined $$dst{$md5}) {
 							# === If checksum match found in the destination directory ===
 							my $shown_md5 = $md5;
+							
+							my @non_link_src = ();
 							foreach my $file (@{$$src{$md5}}) {
 								next if ( -d File::Spec->catfile( $file->{'directory'}, $file->{'name'} ) );
-								#printf("%-49s DUPE\t%s\t%s\n", $shown_md5, $file->{'name'}, $file->{'directory'});
-								&$encode_filename($file);
-								&{ $dupe_callback }( $md5, $shown_md5, $file, $_user, $_OPTIONS );
-								$shown_md5 = "";
+								push @non_link_src, $file;
 							}
-							# === Display destination directory's matching filenames and paths ===
+							
+							my @non_link_dst = ();
 							foreach my $file (@{$$dst{$md5}}) {
 								next if ( -l File::Spec->catfile( $file->{'directory'}, $file->{'name'} ) );
-								#printf("%-49s keep\t%s\t%s\n", $shown_md5, $file->{'name'}, $file->{'directory'});
-								&$encode_filename($file);
-								&{ $keep_callback }( $md5, $shown_md5, $file, $_user, $_OPTIONS );
-								$shown_md5 = "";
+								push @non_link_dst, $file;
 							}
+							
+							if ( scalar(@non_link_src) && scalar(@non_link_dst) ) {
+								foreach my $file (@non_link_src) {
+									#printf("%-49s DUPE\t%s\t%s\n", $shown_md5, $file->{'name'}, $file->{'directory'});
+									&$encode_filename($file);
+									&{ $dupe_callback }( $md5, $shown_md5, $file, $_user, $_OPTIONS );
+								$shown_md5 = "";
+								}
+								# === Display destination directory's matching filenames and paths ===
+								foreach my $file (@non_link_dst) {
+									#printf("%-49s keep\t%s\t%s\n", $shown_md5, $file->{'name'}, $file->{'directory'});
+									&$encode_filename($file);
+									&{ $keep_callback }( $md5, $shown_md5, $file, $_user, $_OPTIONS );
+									$shown_md5 = "";
+								}
+							}
+							
 						}
 					}
 					
@@ -5387,61 +5402,52 @@ sub get_stack_trace(;$) {
 # ==============================================================================
 
 
-# === Main directory processing function ===
-sub ProcessDir($$$$$) {
-	my ($phase, $object, $_user, $_OPTIONS, $_STRINGS) = @_;
-	print STDERR "ProcessDir($phase, $object, $_user, $_OPTIONS, $_STRINGS)\n"; 
-	LOG( "ProcessDir($phase, $object, $_user, $_OPTIONS, $_STRINGS)\n" ); 
+# Possible values for $scan_mode
+use constant SCAN_MODE_SINGLE_OBJECT => 0;
+use constant SCAN_MODE_DIRECTORY     => 1;
+
+
+# === Determine mode and create list of objects ===
+# Called only by ProcessDir
+#
+# All parameters are references.
+#
+# IN:
+#     _object            The object passed to ProcessDir
+# OUT:
+#     _scan_mode         Set to either SCAN_MODE_DIRECTORY or SCAN_MODE_SINGLE_OBJECT
+#     _directory         Value set differs depending on what the object is:
+#                        For directories:   Path of the directory
+#                        For other objects: Path of the directory containing the object
+#     _directory_device  The physical device the object resides on.
+#     _objects           List of objects to process in current directory
+#     _no_scan           Set true if object's directory has a .no_md5sums file
+sub CreateObjectList($$$$$$) {
+	my ($_object, $_scan_mode, $_directory, $_directory_device, $_objects, $_no_scan) = @_;
 	
-	#rename "$directory/md5sums", "$directory/.md5sums" if (-e "$directory/md5sums");
-	
-	
-	# *** Find files and subdirctories in current directory (or mininimal set in single-object mode) ***
-	
-	my %extant = ( 'file' => { }, 'directory' => { }, 'link' => { }, 'special' => { } );
-	
-	# Objects in current directory or in current scan (single-object mode)
-	my @objects = ();
-	
-	# Current directory
-	my $directory;
-	
-	# Either 'directory' for directory mode or 'single' for single-object mode
-	my $scan_mode;
-	use constant SCAN_MODE_SINGLE_OBJECT => 0;
-	use constant SCAN_MODE_DIRECTORY     => 1;
-	
-	# Set true if current directory has a .no_md5sums file
-	my $no_scan;
-	
-	my $one_filesystem_mode = $$_OPTIONS{'one-filesystem'};
-	
-	my $directory_device; # For directory mode it is set to the device the directory resides on
-	
-	# Determine mode and create list of objects
-	if ( -d $object ) {
+	if ( -d $$_object ) {
 		# Directory mode
 		
 		#print "Directory mode\n";
-		$scan_mode = 	SCAN_MODE_DIRECTORY;
+		$$_scan_mode = 	SCAN_MODE_DIRECTORY;
 		
-		$directory = $object;
+		$$_directory = $$_object;
 		#print "Directory: $directory\n";
 		
 		# === Determine the device (for use with the --one-filesystem option) ===
-		($directory_device, undef, undef, undef, undef, undef, undef, undef, undef, undef, undef, undef, undef) = stat($directory);
+		($$_directory_device, undef, undef, undef, undef, undef, undef, undef, undef, undef, undef, undef, undef) = stat($$_directory);
 		
 		
 		# Loop through files in directory and note directories and files...
 		my $DIR;
-		opendir $DIR, $directory;
+		opendir $DIR, $$_directory;
 		
 		while (my $dentry = readdir $DIR) {
 			next if ($dentry =~ /^\.\.?$/);
-			push @objects, $dentry;
+			push @$_objects, $dentry;
 			#print "Entry:  $dentry\n";
 			
-			$no_scan = 1 if ( $dentry eq '.no_md5sums' );
+			$$_no_scan = 1 if ( $dentry eq '.no_md5sums' );
 		}
 		closedir $DIR;
 		
@@ -5449,40 +5455,43 @@ sub ProcessDir($$$$$) {
 		# Single object mode
 		
 		#print "Single-object mode\n";
-		$scan_mode = SCAN_MODE_SINGLE_OBJECT;
+		$$_scan_mode = SCAN_MODE_SINGLE_OBJECT;
 		
-		$directory = dirname( $object );
-		my $object_filename = basename( $object );
+		$$_directory = dirname( $$_object );
+		my $object_filename = basename( $$_object );
 		my $tmp_path;
 		
 		#print "Directory: $directory\n";
 		#print "Filename:  $object_filename\n";
 		
 		# Look for checksums file
-		$tmp_path = File::Spec->catfile( $directory, '.md5sums' );
+		$tmp_path = File::Spec->catfile( $$_directory, '.md5sums' );
 		if ( -e $tmp_path ) {
-			push @objects, '.md5sums';
+			push @$_objects, '.md5sums';
 		}
 		
 		# Look for don't-scan file
-		$tmp_path = File::Spec->catfile( $directory, '.no_md5sums' );
+		$tmp_path = File::Spec->catfile( $$_directory, '.no_md5sums' );
 		if ( -e $tmp_path ) {
-			push @objects, '.no_md5sums';
-			$no_scan = 1;
+			push @$_objects, '.no_md5sums';
+			$$_no_scan = 1;
 		}
 		
-		push @objects, $object_filename;
+		push @$_objects, $object_filename;
 	}
-	
-	# Record some basic information about the object currently being scanned
-	$$_OPTIONS{'CUR_SCAN'}{$object} = { 'object' => $object, 'directory' => $directory, 'objects' => \@objects, 'scan_mode' => $scan_mode, 'no_scan' => $no_scan };
-	
-	# Record the current directory (directory mode) or object (single-object mode)
-	$$_OPTIONS{'CUR_OBJECT'} = $object;
-	
-	
-	# *** Directory enter callback ***
-	
+}
+
+
+# === Directory enter callback ===
+# Called only by ProcessDir
+#
+# IN:
+#     phase     Current phase (either 1 or 2)
+#     _OPTIONS  Global options datastructure
+#     _user     User-defined datastructure (may be modified in callback)
+#     object    Name of the object being processed
+sub	CallDirectoryEnterCallback($$$$) {
+	my ($phase, $_OPTIONS, $_user, $object);
 	if ( $phase == 1 ) {
 		if ( defined $$_OPTIONS{'_COMMAND'}{'phase-1-dir-enter'} ) {
 			#print "$$_OPTIONS{'_COMMAND'}{'phase-1-dir-enter'}\n";
@@ -5494,22 +5503,19 @@ sub ProcessDir($$$$$) {
 			&{ $$_OPTIONS{'_COMMAND'}{'phase-2-dir-enter'} }( $_user, $object, $_OPTIONS );
 		}
 	}
-	
-	
-	if ( $$_OPTIONS{'skip-if-no_md5sums-present'} ) {
-		# === Don't process directry if it has a .no_md5sums file ===
-		if ( $no_scan ) {
-			print STDERR Localize( $$_STRINGS{'has-no-md5sums'} ) . "\n";
-			
-			goto return_from_scan;
-		}
-	}
-	
-	
-	# *** Classify objects ***
-	
+}
+
+
+# === Classify objects in directory ===
+# Called only by ProcessDir
+#
+# _objects   Reference to list of objects in directory
+# directory  Path of directory containing the objects
+# _extant    Reference to hash to hold the classified objects
+sub ClassifyObject($$$) {
+	my ( $_objects, $directory, $_extant ) = @_;
 	# Loop through objects list and note directories and files...
-	foreach my $dentry ( @objects ) {
+	foreach my $dentry ( @$_objects ) {
 		#print "entry: $dentry\n";
 		#print Dumper( \%extant ); print "\n\n";
 		
@@ -5527,247 +5533,421 @@ sub ProcessDir($$$$$) {
 		
 		# Create a hash entry for the current dentry but have it contain nothing
 		# This will later be set to the object's metatdata
-		$extant{$type}{$dentry} = undef;
+		$$_extant{$type}{$dentry} = undef;
 		
 		# Note if the dentry is a symbolic link
 		if ( -l "$directory/$dentry") {
-			$extant{'link'}{$dentry} = 1;
+			$$_extant{'link'}{$dentry} = 1;
 		}
 		
 		# Also record type in set of all entries for current directory
-		$extant{'ALL'}{$dentry} = $type;
+		$$_extant{'ALL'}{$dentry} = $type;
 	}
+}
+
+
+# === Read existing .md5sums file ===
+# Called only by ProcessDir
+# All parameters are references.
+#
+# IN:
+#   _directory  Path of directory containing the objects
+# OUT:
+#   _version    Checksum file's version number, set to 0 if checksum file is not found, otherwise is checksum file version
+#   _old_count  Number of previously extant files listed in checksum file
+#   _old        Map of previously extant files' Checksum -> File metadata
+sub ReadChecksumsFile($$$$) {
+	my ( $_directory, $_version, $_old_count, $_old ) = @_;
+	
+	my $filename = File::Spec->catfile($$_directory, '.md5sums');
+	#print "Using checksum file $filename\n";
+	open SUM, "<", $filename or die "Fatal: $! while opening \"".$filename."\"\n";
+	
+	my $first_line = undef;
+	#my $version = 1;
+	
+	while (my $line = <SUM>) {
+		chomp $line;
+		
+		# === Check for version number on first line ===
+		unless (defined $first_line) {
+			$first_line = $line;
+			if ($line =~ /^v(\d+(\.\d+)?)$/) {
+				$$_version = $1;
+				next;
+			}
+		}
+		
+		next if ($line =~ /^md5sum: .+: Is a directory$/); # may be found in older checksum files
+		
+		if ($$_version == 2	) {
+			#if ($line =~ /^\t(\d+)\t(\d+)\t(.+?\/)?([^\/]+)$/) {
+			if ($line =~ /^([0-9a-fA-F]{32})\t(\d+)\t(\d+)\t(.+)$/) {
+				#my ($md5, $mtime, $size, $path, $name) = ($1, $2, $3, $4, $5);
+				my ($md5, $mtime, $size, $name) = ($1, $2, $3, $4, $5);
+				my $cooked_name = $name;
+				$cooked_name =~ s/\\(.)/\1/g;
+				$$_old{$cooked_name} = { md5=>$md5, mtime=>$mtime, size=>$size, path=>$$_directory, name=>$name, line=>$line};
+				LOG( "v2:\t\$\$_old{$cooked_name} = { md5=>$md5, mtime=>$mtime, size=>$size, path=>$$_directory, name=>$name, line=>$line};\n" );
+				#print "$line\n";
+				#print "v2:\t\$\$_old{$cooked_name} = { md5=>$md5, mtime=>$mtime, size=>$size, path=>$$_directory, name=>$name, line=>$line};\n";
+				$$_old_count++;
+			}
+			
+		} elsif ($$_version == 1) {
+			if ($line =~ /^(\S+) (.+?\/)?([^\/]+)$/) {
+				my ($md5, $path, $name) = ($1, $2, $3);
+				my $cooked_name = $name;
+				$cooked_name =~ s/\\(.)/\1/g;
+				$$_old{$cooked_name} = { md5=>$md5, path=>$$_directory, name=>$name, line=>$line};
+				LOG( "v1: \$\$_old{$cooked_name} = { md5=>$md5, path=>$$_directory, name=>$name, line=>$line};\n" );
+				
+				$$_old_count++;
+			}
+		}
+	}
+	close SUM;
+}
+
+
+# === Get object's metadata ===
+# Called only by ProcessDir
+sub GatherMetadata($$$$$$$$$) {
+	my ( 
+	                                # IN:
+	     $directory,                # Current directory's path
+	     $name,                     # Name of object to get metadata for
+	     $_old,                     # Contents of the exisiting .md5sums file
+	     $never_rewrite_checksums,  # Set to true if .md5sums file should never be rewritten
+	     $_OPTIONS,                 # Global options datastructure
+	                                # 
+	                                # OUT:
+	     $_new_count,               # Will be set to number of checksummable objects in current directory
+	     $_force_rewrite,           # Will be set to true if .md5sums file should be rewritten
+	     $_extant,                  # Datastructure classifying objects in current directory
+	     $_md5sums                  # Will be populated with data for new checksums file
+	   ) = @_;
+	# === START Gather metadata ===
+	
+	my $compute_missing   = $$_OPTIONS{'compute-missing'};  # Checksums should be computed if not present
+	my $discard_existing  = $$_OPTIONS{'discard-existing'}; # Any existing checksums should be discarded
+	
+	my $compute_always    =      $compute_missing    &&      $discard_existing   ;  # Compute always
+	my $discard_checksums =  ( ! $compute_missing )  &&      $discard_existing   ;  # Always discard
+	my $use_existing      =  ( ! $compute_missing )  &&  ( ! $discard_existing ) ;  # Use existing, only recompute if changed
+	
+	my $filepath = "$directory/$name";
+	LOG( "Checking $filepath\n" );
+	#print "Checking $filepath\n";
+	
+	# === Get file's current modify time and size ===
+	my ($stat_dev, $stat_ino, $stat_mtime, $stat_size) = StatFile($filepath);
+	LOG( "stat: (                                      dev:$stat_dev, ino:$stat_ino, mtime:$stat_mtime, size:$stat_size)\n" );
+	
+	my %metadata;
+	
+	if ( $$_OPTIONS{'use-checksums'} == 0 ) {
+		# === Don't use checksums ===
+		
+		%metadata = ( mtime=>$stat_mtime, size=>$stat_size, path=>$directory, name=>$name, type=>$$_extant{'ALL'}{$name}, is_link=>$$_extant{'link'}{$name}, dev=>$stat_dev, ino=>$stat_ino );
+		
+	} else {
+		# === Use checksums ===
+		
+		LOG( "old:  (md5:$$_old{$name}{md5}, mtime:$$_old{$name}{mtime}, size:$$_old{$name}{size})\n" );
+		
+		$$_new_count++ if (
+		                  ( defined $$_old{$name} ) && 
+		                  ( ! -l File::Spec->catfile( $directory, $name ) )
+		                );
+		
+		if ( ! exists $$_extant{'file'}{$name} ) {
+			# *** Mot a regular file ***
+			LOG( "*** Not a regular file ***\n" );
+		
+			%metadata = ( mtime=>$stat_mtime, size=>$stat_size, path=>$directory, name=>$name, type=>$$_extant{'ALL'}{$name}, is_link=>$$_extant{'link'}{$name}, dev=>$stat_dev, ino=>$stat_ino );
+			
+		} elsif ( $discard_checksums ) {
+			# *** Always discard checksums ***
+			LOG( "*** Discarding checksums ***\n" );
+			
+			# Checksum discard requested so, null out the checksum
+			%metadata = ( md5=>undef, mtime=>$stat_mtime, size=>$stat_size, path=>$directory, name=>$name, type=>$$_extant{'ALL'}{$name}, is_link=>$$_extant{'link'}{$name}, dev=>$stat_dev, ino=>$stat_ino );
+			
+			$$_force_rewrite = 1;
+			unless ( $never_rewrite_checksums ) {
+				ClearXA($filepath, $_OPTIONS );
+			}
+			
+		} else {
+			# *** Normal case ***
+			
+			# === Look for checksum in file's extended attributes ===
+			my ($xa_md5, $xa_md5_mtime, $xa_md5_size) = GetXA($filepath, $_OPTIONS);
+			LOG( "XA:   (md5:$xa_md5, mtime:$xa_md5_mtime, size:$xa_md5_size)\n" );
+			
+			# === File's computed MD5 checksum ===
+			my $md5 = undef;
+			
+			# === Determine old MD5, mtime, and size ===
+			
+			my ($old_md5, $old_mtime, $old_size, $old_source) = ( undef, undef, undef, 'missing' );
+			my $old_metadata_missing;
+			
+			if ( (defined $xa_md5) && (defined $xa_md5_mtime) && (defined $xa_md5_size) ) {
+				# === MD5, date, and size in extended attributes ===
+				LOG( "=== MD5, date, and size in extended attributes ===\n" );
+				( $old_md5, $old_mtime, $old_size, $old_source ) = ( $xa_md5, $xa_md5_mtime, $xa_md5_size, 'attributes' );
+				$old_metadata_missing = 0;
+				
+			} elsif ( (defined $$_old{$name}{md5}) && (defined $$_old{$name}{mtime}) && (defined $$_old{$name}{size}) ) {
+				# === MD5, date, and size in md5sums ===
+				LOG( "=== MD5, date, and size in md5sums ===\n" );
+				( $old_md5, $old_mtime, $old_size, $old_source ) = ( $$_old{$name}{md5}, $$_old{$name}{mtime}, $$_old{$name}{size}, 'md5sums' );
+				$old_metadata_missing = 0;
+				
+			} elsif (defined $xa_md5) {
+				# === MD5 in extended attributes ===
+				LOG( "=== MD5 in extended attributes ===\n");
+				( $old_md5, $old_mtime, $old_size, $old_source ) = ( $xa_md5, undef, undef, 'attributes' );
+				$old_metadata_missing = 1;
+				
+			} elsif (defined $$_old{$name}{md5}) {
+				# === MD5 in md5sums ===
+				LOG( "*** MD5 in md5sums ***\n" );
+				( $old_md5, $old_mtime, $old_size, $old_source ) = ( $$_old{$name}{md5}, undef, undef, 'md5sums' );
+				$old_metadata_missing = 1;
+				
+			} else {
+				$old_metadata_missing = 1;
+			}
+			
+			# === Recompute checksums if needed ===
+			if ( 
+			       $compute_always || 
+			     ( $compute_missing && $old_metadata_missing ) ||
+			     ( $stat_mtime != $old_mtime ) || 
+			     ( $stat_size != $old_size ) 
+			   ) {
+				$md5 = ComputeMD5($filepath);
+				%metadata = ( md5=>$md5,      mtime=>$stat_mtime, size=>$stat_size, source=>'computed',  old_md5=>$old_md5,  old_md5_mtime=>$old_mtime,  old_md5_size=>$old_size,  md5_mtime=>$stat_mtime, md5_size=>$stat_size, path=>$directory, name=>$name, type=>$$_extant{'ALL'}{$name}, is_link=>$$_extant{'link'}{$name}, dev=>$stat_dev, ino=>$stat_ino );
+				$$_force_rewrite = 1;
+				unless ( $never_rewrite_checksums ) {
+					WriteXA($filepath, \%metadata, $_OPTIONS );
+				}
+			} else {
+				# Use existing metadata
+				%metadata = ( md5=>$old_md5,  mtime=>$stat_mtime, size=>$stat_size, source=>$old_source, md5_mtime=>$old_mtime,  md5_size=>$old_size,  path=>$directory, name=>$name, type=>$$_extant{'ALL'}{$name}, is_link=>$$_extant{'link'}{$name}, dev=>$stat_dev, ino=>$stat_ino );
+			}
+			
+			AddToChecksumFile($_md5sums, { %metadata } );
+			
+		} # === END - Normal case ===
+		
+	} # === END - Use checksums ===
+	
+	# === Record file's metadata ===
+	
+	# Store by name
+	$$_extant{ $$_extant{'ALL'}{$name} }{$name} = \%metadata;
+	
+	LOG( "\n" );
+	
+	# === END - Gather metadata ===
+}
+
+
+# === Per-object callback ===
+# Called only by ProcessDir
+#
+# IN:
+#     phase      Current phase (either 1 or 2)
+#     _user      User-defined datastructure (may be modified in callback)
+#     directory  Path of current object's directory
+#     name       Name of the object being processed
+#     _extant    Reference to hash to hold the classified objects
+#     _OPTIONS   Global options datastructure
+sub CallPerObjectCallback($$$$$$) {
+	my ($phase, $_user, $directory, $name, $_extant, $_OPTIONS) = @_;
+	
+	if ( $phase == 1 ) {
+		if ( defined $$_OPTIONS{'_COMMAND'}{'phase-1-per-object'} ) {
+			#print "$$_OPTIONS{'_COMMAND'}{'phase-1-per-object'}\n";
+			#&{ $$_OPTIONS{'_COMMAND'}{'phase-1-per-object'} }( $_user, $directory, $name, \%metadata, $_OPTIONS );
+			&{ $$_OPTIONS{'_COMMAND'}{'phase-1-per-object'} }( $_user, $directory, $name, $$_extant{ $$_extant{'ALL'}{$name} }{$name}, $_OPTIONS );
+		}
+	} else { # phase 2
+		if ( defined $$_OPTIONS{'_COMMAND'}{'phase-2-per-object'} ) {
+			#print "$$_OPTIONS{'_COMMAND'}{'phase-2-per-object'}\n";
+			#&{ $$_OPTIONS{'_COMMAND'}{'phase-2-per-object'} }( $_user, $directory, $name, \%metadata, $_OPTIONS );
+			&{ $$_OPTIONS{'_COMMAND'}{'phase-2-per-object'} }( $_user, $directory, $name, $$_extant{ $$_extant{'ALL'}{$name} }{$name}, $_OPTIONS );
+		}
+	}
+}
+
+
+# === Per-subdirectory callback ===
+# Called only by ProcessDir
+#
+# IN:
+#     phase         Current phase (either 1 or 2)
+#     _user         User-defined datastructure (may be modified in callback)
+#     directory     Path of current object's directory
+#     subdirectory  Name of the subdirectory being processed
+#     _extant       Reference to hash to hold the classified objects
+#     _OPTIONS      Global options datastructure
+# OUT:
+#     _returned     Will be set to the callback's return value
+sub CallPerSubdirectoryCallback($$$$$$$) {
+	my ( $phase, $_user, $directory, $subdirectory, $_extant, $_OPTIONS, $_returned ) = @_;
+	
+	if ( $phase == 1 ) {
+		if ( defined $$_OPTIONS{'_COMMAND'}{'phase-1-per-subdirectory'} ) {
+			#print "$$_OPTIONS{'_COMMAND'}{'phase-1-per-subdirectory'}\n";
+			&{ $$_OPTIONS{'_COMMAND'}{'phase-1-per-subdirectory'} }( $_user, $directory, $subdirectory, $$_returned, $_extant, $_OPTIONS );
+		}
+	} else { # phase 2
+		if ( defined $$_OPTIONS{'_COMMAND'}{'phase-2-per-subdirectory'} ) {
+			#print "$$_OPTIONS{'_COMMAND'}{'phase-2-per-subdirectory'}\n";
+			&{ $$_OPTIONS{'_COMMAND'}{'phase-2-per-subdirectory'} }( $_user, $directory, $subdirectory, $$_returned, $_extant, $_OPTIONS );
+		}
+	}
+}
+
+
+# === Directory leave callback ===
+# Called only by ProcessDir
+# 
+# IN:
+#     phase     Current phase (either 1 or 2)
+#     _OPTIONS  Global options datastructure
+#     _user     User-defined datastructure (may be modified in callback)
+#     object    Name of the object being processed
+# OUT:
+#     Returns the value returned by the callback function or undef if no callback was made.
+sub CallDirectoryLeaveCallback($$$$) {
+	my ($phase, $_OPTIONS, $_user, $object) = @_;
+	
+	if ( $phase == 1 ) {
+		if ( defined $$_OPTIONS{'_COMMAND'}{'phase-1-dir-leave'} ) {
+			#print "$$_OPTIONS{'_COMMAND'}{'phase-1-dir-leave'}\n";
+			return &{ $$_OPTIONS{'_COMMAND'}{'phase-1-dir-leave'} }( $_user, $object, $_OPTIONS );
+		}
+	} else { # phase 2
+		if ( defined $$_OPTIONS{'_COMMAND'}{'phase-2-dir-leave'} ) {
+			#print "$$_OPTIONS{'_COMMAND'}{'phase-2-dir-leave'}\n";
+			return &{ $$_OPTIONS{'_COMMAND'}{'phase-2-dir-leave'} }( $_user, $object, $_OPTIONS );
+		}
+	}
+	return undef;
+}
+
+
+# *** Main directory processing function ***
+#
+# IN:
+#     phase     Current phase (either 1 or 2)
+#     object    Name of the object to be processed
+#     _user     User-defined datastructure (may be modified in callbacks)
+#     _OPTIONS  Global options datastructure
+#     _STRINGS  Hash of localized strings
+# OUT:
+#     Returns the value returned by the directory leave callback
+sub ProcessDir($$$$$) {
+	my ($phase, $object, $_user, $_OPTIONS, $_STRINGS) = @_;
+	print STDERR "ProcessDir($phase, $object, $_user, $_OPTIONS, $_STRINGS)\n"; 
+	LOG( "ProcessDir($phase, $object, $_user, $_OPTIONS, $_STRINGS)\n" ); 
+	
+	# *** Find files and subdirctories in current directory (or mininimal set in single-object mode) ***
+	
+	my %extant = ( 'file' => { }, 'directory' => { }, 'link' => { }, 'special' => { } );
+	
+	my @objects = ();      # Objects in current directory or in current scan (for single-object mode)
+	my $directory;         # Current directory's path
+	my $scan_mode;         # Will be set to either 'directory' for directory mode or 'single' for single-object mode
+	my $no_scan = 0;       # Set true if current directory has a .no_md5sums file
+	my $directory_device;  # For directory mode it will be set to the device the directory resides on
+	
+	# Determine mode and create list of objects
+	CreateObjectList(\$object, \$scan_mode, \$directory, \$directory_device, \@objects, \$no_scan);
+	
+	# Record some basic information about the object currently being scanned
+	$$_OPTIONS{'CUR_SCAN'}{$object} = { 'object' => $object, 'directory' => $directory, 'objects' => \@objects, 'scan_mode' => $scan_mode, 'no_scan' => $no_scan };
+	
+	# Record the current directory (directory mode) or object (single-object mode)
+	$$_OPTIONS{'CUR_OBJECT'} = $object;
+	
+	# *** Directory enter callback ***
+	CallDirectoryEnterCallback($phase, $_OPTIONS, $_user, $object);
+	
+	if ( $$_OPTIONS{'skip-if-no_md5sums-present'} ) {
+		# === Don't process directry if it has a .no_md5sums file ===
+		if ( $no_scan ) {
+			print STDERR Localize( $$_STRINGS{'has-no-md5sums'} ) . "\n";
+			
+			goto return_from_scan;
+		}
+	}
+	
+	# *** Classify objects ***
+	ClassifyObject( \@objects, $directory, \%extant );
 	
 	
 	# ****************************************************************************
 	# ***  Checksum objects                                                    ***
 	# ****************************************************************************
 	
-	
-	my $use_checksums = $$_OPTIONS{'use-checksums'};
-	
 	# *** Read checksum file if it exists ***
 	
-	my $version = 0; # 0: not found, otherwise is checksum file version
-	my $old_count = 0; # === Number of previously extant files listed in checksum file ===
-	my %old = ();      # === Previously extant files' Checksum -> File metadata map ===
-	if ( $use_checksums && exists $extant{'file'}{".md5sums"} ) {
-		
-		my $filename = File::Spec->catfile($directory, '.md5sums');
-		#print "Using checksum file $filename\n";
-		open SUM, "<", $filename or die "Fatal: $! while opening \"".$filename."\"\n";
-		
-		my $first_line = undef;
-		#my $version = 1;
-		
-		while (my $line = <SUM>) {
-			chomp $line;
-			
-			# === Check for version number on first line ===
-			unless (defined $first_line) {
-				$first_line = $line;
-				if ($line =~ /^v(\d+(\.\d+)?)$/) {
-					$version = $1;
-					next;
-				}
-			}
-			
-			next if ($line =~ /^md5sum: .+: Is a directory$/); # may be found in older checksum files
-			
-			if ($version == 2	) {
-				#if ($line =~ /^\t(\d+)\t(\d+)\t(.+?\/)?([^\/]+)$/) {
-				if ($line =~ /^([0-9a-fA-F]{32})\t(\d+)\t(\d+)\t(.+)$/) {
-					#my ($md5, $mtime, $size, $path, $name) = ($1, $2, $3, $4, $5);
-					my ($md5, $mtime, $size, $name) = ($1, $2, $3, $4, $5);
-					my $cooked_name = $name;
-					$cooked_name =~ s/\\(.)/\1/g;
-					$old{$cooked_name} = { md5=>$md5, mtime=>$mtime, size=>$size, path=>$directory, name=>$name, line=>$line};
-					LOG( "v2:\t\$old{$cooked_name} = { md5=>$md5, mtime=>$mtime, size=>$size, path=>$directory, name=>$name, line=>$line};\n" );
-					#print "$line\n";
-					#print "v2:\t\$old{$cooked_name} = { md5=>$md5, mtime=>$mtime, size=>$size, path=>$directory, name=>$name, line=>$line};\n";
-					$old_count++;
-				}
-				
-			} elsif ($version == 1) {
-				if ($line =~ /^(\S+) (.+?\/)?([^\/]+)$/) {
-					my ($md5, $path, $name) = ($1, $2, $3);
-					my $cooked_name = $name;
-					$cooked_name =~ s/\\(.)/\1/g;
-					$old{$cooked_name} = { md5=>$md5, path=>$directory, name=>$name, line=>$line};
-					LOG( "v1: \$old{$cooked_name} = { md5=>$md5, path=>$directory, name=>$name, line=>$line};\n" );
-					
-					$old_count++;
-				}
-			}
-		}
-		close SUM;
+	my $version = 0;    # 0: not found, otherwise is checksum file version
+	my $old_count = 0;  # Number of previously extant files listed in checksum file
+	my %old = ();       # Previously extant files' Checksum -> File metadata map
+	
+	if ( 
+	     $$_OPTIONS{'use-checksums'} && 
+	     exists $extant{'file'}{".md5sums"} 
+	   ) {
+		ReadChecksumsFile( \$directory, \$version, \$old_count, \%old );
 	}
 	
-	my $never_rewrite_checksums = $$_OPTIONS{'never-rewrite-checksums'};
-	my $force_rewrite = 0; # === Set true to force rewrite of checksum file ===
-	if ($version < $CURRENT_VERSION) {
-		# === .md5sums was generated by an earlier version of this program ===
+	my $force_rewrite = 0; # Set true to force rewrite of checksum file
+	if ($version < $CURRENT_CHECKSUM_FILE_VERSION) {
+		# .md5sums was generated by an earlier version of this program
 		$force_rewrite = 1;
 	}
 	
-	#print Dumper( $_OPTIONS );
+	my $never_rewrite_checksums = $$_OPTIONS{'never-rewrite-checksums'};
 	
 	# *** Loop through objects to check ***
 	my $new_count = 0;     # === Number of currently extant files found in checksum file ===
 	my %md5sums = ();      # === Data for new checksum file ===
 	
-	my $compute_missing   = $$_OPTIONS{'compute-missing'};
-	my $discard_existing  = $$_OPTIONS{'discard-existing'};
-	
-	my $compute_always    =      $compute_missing    &&      $discard_existing   ;  # Compute always
-	my $discard_checksums =  ( ! $compute_missing )  &&      $discard_existing   ;  # Always discard
-#	my $compute_missing   =      $compute_missing    &&  ( ! $discard_existing ) ;  # Compute if missing otherwise use existing
-	my $use_existing      =  ( ! $compute_missing )  &&  ( ! $discard_existing ) ;  # Use existing, only recompute if changed
-	
 	foreach my $name (sort keys %{$extant{'ALL'}}) {
 		next if ($ignore{$name});
 		
-		# === START Gather metadata ===
+		# === Get object's metadata ===
+		GatherMetadata( 
+		                                           # IN:
+		                $directory,                # Current directory's path
+		                $name,                     # Name of object to get metadata for
+		                \%old,                     # Contents of the exisiting .md5sums file
+		                $never_rewrite_checksums,  # Set to true if .md5sums file should never be rewritten
+		                $_OPTIONS,                 # Global options datastructure
+		                                           #
+		                                           # OUT:
+		                \$new_count,               # Will be set to number of checksummable objects in current directory
+		                \$force_rewrite,           # Will be set to true if .md5sums file should be rewritten
+		                \%extant,                  # Datastructure classifying objects in current directory
+		                \%md5sums                  # Will be populated with data for new checksums file
+		              );
 		
-		my $filepath = "$directory/$name";
-		LOG( "Checking $filepath\n" );
-		#print "Checking $filepath\n";
-		
-		# === Get file's current modify time and size ===
-		my ($stat_dev, $stat_ino, $stat_mtime, $stat_size) = StatFile($filepath);
-		LOG( "stat: (                                      dev:$stat_dev, ino:$stat_ino, mtime:$stat_mtime, size:$stat_size)\n" );
-		
-		my %metadata;
-		
-		if ( $use_checksums == 0 ) {
-			# === Don't use checksums ===
-			
-			%metadata = ( mtime=>$stat_mtime, size=>$stat_size, path=>$directory, name=>$name, type=>$extant{'ALL'}{$name}, is_link=>$extant{'link'}{$name}, dev=>$stat_dev, ino=>$stat_ino );
-			
-		} else {
-			# === Use checksums ===
-			
-			LOG( "old:  (md5:$old{$name}{md5}, mtime:$old{$name}{mtime}, size:$old{$name}{size})\n" );
-			
-			$new_count++ if (
-			                  ( defined $old{$name} ) && 
-			                  ( ! -l File::Spec->catfile( $directory, $name ) )
-			                );
-			
-			if ( ! exists $extant{'file'}{$name} ) {
-				# *** Mot a regular file ***
-				LOG( "*** Not a regular file ***\n" );
-			
-				%metadata = ( mtime=>$stat_mtime, size=>$stat_size, path=>$directory, name=>$name, type=>$extant{'ALL'}{$name}, is_link=>$extant{'link'}{$name}, dev=>$stat_dev, ino=>$stat_ino );
-				
-			} elsif ( $discard_checksums ) {
-				# *** Always discard checksums ***
-				LOG( "*** Discarding checksums ***\n" );
-				
-				# Checksum discard requested so, null out the checksum
-				%metadata = ( md5=>undef, mtime=>$stat_mtime, size=>$stat_size, path=>$directory, name=>$name, type=>$extant{'ALL'}{$name}, is_link=>$extant{'link'}{$name}, dev=>$stat_dev, ino=>$stat_ino );
-				
-				$force_rewrite = 1;
-				unless ( $never_rewrite_checksums ) {
-					ClearXA($filepath, $_OPTIONS );
-				}
-				
-			} else {
-				# *** Normal case ***
-				
-				# === Look for checksum in file's extended attributes ===
-				my ($xa_md5, $xa_md5_mtime, $xa_md5_size) = GetXA($filepath, $_OPTIONS);
-				LOG( "XA:   (md5:$xa_md5, mtime:$xa_md5_mtime, size:$xa_md5_size)\n" );
-				
-				# === File's computed MD5 checksum ===
-				my $md5 = undef;
-				
-				# === Determine old MD5, mtime, and size ===
-				
-				my ($old_md5, $old_mtime, $old_size, $old_source) = ( undef, undef, undef, 'missing' );
-				my $old_metadata_missing;
-				
-				if ( (defined $xa_md5) && (defined $xa_md5_mtime) && (defined $xa_md5_size) ) {
-					# === MD5, date, and size in extended attributes ===
-					LOG( "=== MD5, date, and size in extended attributes ===\n" );
-					( $old_md5, $old_mtime, $old_size, $old_source ) = ( $xa_md5, $xa_md5_mtime, $xa_md5_size, 'attributes' );
-					$old_metadata_missing = 0;
-					
-				} elsif ( (defined $old{$name}{md5}) && (defined $old{$name}{mtime}) && (defined $old{$name}{size}) ) {
-					# === MD5, date, and size in md5sums ===
-					LOG( "=== MD5, date, and size in md5sums ===\n" );
-					( $old_md5, $old_mtime, $old_size, $old_source ) = ( $old{$name}{md5}, $old{$name}{mtime}, $old{$name}{size}, 'md5sums' );
-					$old_metadata_missing = 0;
-					
-				} elsif (defined $xa_md5) {
-					# === MD5 in extended attributes ===
-					LOG( "=== MD5 in extended attributes ===\n");
-					( $old_md5, $old_mtime, $old_size, $old_source ) = ( $xa_md5, undef, undef, 'attributes' );
-					$old_metadata_missing = 1;
-					
-				} elsif (defined $old{$name}{md5}) {
-					# === MD5 in md5sums ===
-					LOG( "*** MD5 in md5sums ***\n" );
-					( $old_md5, $old_mtime, $old_size, $old_source ) = ( $old{$name}{md5}, undef, undef, 'md5sums' );
-					$old_metadata_missing = 1;
-					
-				} else {
-					$old_metadata_missing = 1;
-				}
-				
-				# === Recompute checksums if needed ===
-				if ( 
-				       $compute_always || 
-				     ( $compute_missing && $old_metadata_missing ) ||
-				     ( $stat_mtime != $old_mtime ) || 
-				     ( $stat_size != $old_size ) 
-				   ) {
-					$md5 = ComputeMD5($filepath);
-					%metadata = ( md5=>$md5,      mtime=>$stat_mtime, size=>$stat_size, source=>'computed',  old_md5=>$old_md5,  old_md5_mtime=>$old_mtime,  old_md5_size=>$old_size,  md5_mtime=>$stat_mtime, md5_size=>$stat_size, path=>$directory, name=>$name, type=>$extant{'ALL'}{$name}, is_link=>$extant{'link'}{$name}, dev=>$stat_dev, ino=>$stat_ino );
-					$force_rewrite = 1;
-					unless ( $never_rewrite_checksums ) {
-						WriteXA($filepath, \%metadata, $_OPTIONS );
-					}
-				} else {
-					# Use existing metadata
-					%metadata = ( md5=>$old_md5,  mtime=>$stat_mtime, size=>$stat_size, source=>$old_source, md5_mtime=>$old_mtime,  md5_size=>$old_size,  path=>$directory, name=>$name, type=>$extant{'ALL'}{$name}, is_link=>$extant{'link'}{$name}, dev=>$stat_dev, ino=>$stat_ino );
-				}
-				
-				AddToChecksumFile(\%md5sums, { %metadata } );
-				
-			} # === END - Normal case ===
-			
-		} # === END - Use checksums ===
-		
-		# === Record file's metadata ===
-		
-		# Store by name
-		$extant{ $extant{'ALL'}{$name} }{$name} = \%metadata;
-		
-		# === END - Gather metadata ===
-		
-		
-		LOG( "\n" );
-		
-		
-		if ( $phase == 1 ) {
-			if ( defined $$_OPTIONS{'_COMMAND'}{'phase-1-per-object'} ) {
-				#print "$$_OPTIONS{'_COMMAND'}{'phase-1-per-object'}\n";
-				#&{ $$_OPTIONS{'_COMMAND'}{'phase-1-per-object'} }( $_user, $directory, $name, \%metadata, $_OPTIONS );
-				&{ $$_OPTIONS{'_COMMAND'}{'phase-1-per-object'} }( $_user, $directory, $name, $extant{ $extant{'ALL'}{$name} }{$name}, $_OPTIONS );
-			}
-		} else { # phase 2
-			if ( defined $$_OPTIONS{'_COMMAND'}{'phase-2-per-object'} ) {
-				#print "$$_OPTIONS{'_COMMAND'}{'phase-2-per-object'}\n";
-				#&{ $$_OPTIONS{'_COMMAND'}{'phase-2-per-object'} }( $_user, $directory, $name, \%metadata, $_OPTIONS );
-				&{ $$_OPTIONS{'_COMMAND'}{'phase-2-per-object'} }( $_user, $directory, $name, $extant{ $extant{'ALL'}{$name} }{$name}, $_OPTIONS );
-			}
-		}
+		# *** Per-object callback ***
+		CallPerObjectCallback($phase, $_user, $directory, $name, \%extant, $_OPTIONS);
 		
 	} # === END Loop through files ===
 	
 	
-	# *** Only write checksum file if needed ***
+	# *** Write checksum file if needed ***
 	if (
 	     ( ! $never_rewrite_checksums ) &&
 	     (
@@ -5784,12 +5964,12 @@ sub ProcessDir($$$$$) {
 		
 	# *** Process current directory's subdirectories ***
 	if ( ( $scan_mode == SCAN_MODE_DIRECTORY ) && ( $$_OPTIONS{recurse} ) ) {
-		#foreach my $subdirectory (sort keys %extant_dirs) {
 		foreach my $subdirectory (sort keys %{$extant{'directory'}}) {
 			# Skip subdirectories that are actually symlinks to directories
 			next if ( defined $extant{'link'}{$subdirectory} );
 			
-			if ( $one_filesystem_mode ) {
+			if ( $$_OPTIONS{'one-filesystem'} ) {
+				# Don't cross filesystem boundaries
 				if ( $extant{'directory'}{$subdirectory}{'dev'} != $directory_device ) {
 					print STDERR Localize( $STRINGS{'NOTE'} ) . " " . Localize( $STRINGS{'is-a-mount-point'} ) . File::Spec->catdir($directory, $subdirectory) . "\n";
 					next;
@@ -5801,40 +5981,17 @@ sub ProcessDir($$$$$) {
 			# Restore the current directory
 			$$_OPTIONS{'CUR_OBJECT'} = $directory;
 			
-			if ( $phase == 1 ) {
-				if ( defined $$_OPTIONS{'_COMMAND'}{'phase-1-per-subdirectory'} ) {
-					#print "$$_OPTIONS{'_COMMAND'}{'phase-1-per-subdirectory'}\n";
-					&{ $$_OPTIONS{'_COMMAND'}{'phase-1-per-subdirectory'} }( $_user, $directory, $subdirectory, $returned, \%extant, $_OPTIONS );
-				}
-			} else { # phase 2
-				if ( defined $$_OPTIONS{'_COMMAND'}{'phase-2-per-subdirectory'} ) {
-					#print "$$_OPTIONS{'_COMMAND'}{'phase-2-per-subdirectory'}\n";
-					&{ $$_OPTIONS{'_COMMAND'}{'phase-2-per-subdirectory'} }( $_user, $directory, $subdirectory, $returned, \%extant, $_OPTIONS );
-				}
-			}
+			# *** Per-subdirectory callback ***
+			CallPerSubdirectoryCallback($phase, $_user, $directory, $subdirectory, \%extant, $_OPTIONS, \$returned);
 		}
 	}
-	
-	#print Dumper( \%extant );
 	
 	# *** Return checksums and metadata ***
 	
 return_from_scan:
 	
-	# Return value
-	my $return = undef;
-	
-	if ( $phase == 1 ) {
-		if ( defined $$_OPTIONS{'_COMMAND'}{'phase-1-dir-leave'} ) {
-			#print "$$_OPTIONS{'_COMMAND'}{'phase-1-dir-leave'}\n";
-			$return = &{ $$_OPTIONS{'_COMMAND'}{'phase-1-dir-leave'} }( $_user, $directory, $_OPTIONS );
-		}
-	} else { # phase 2
-		if ( defined $$_OPTIONS{'_COMMAND'}{'phase-2-dir-leave'} ) {
-			#print "$$_OPTIONS{'_COMMAND'}{'phase-2-dir-leave'}\n";
-			$return = &{ $$_OPTIONS{'_COMMAND'}{'phase-2-dir-leave'} }( $_user, $directory, $_OPTIONS );
-		}
-	}
+	# *** Directory leave callback ***
+	my $return = CallDirectoryLeaveCallback($phase, $_OPTIONS, $_user, $object);
 	
 	# Clean up
 	delete $$_OPTIONS{'CUR_SCAN'}{$object};
