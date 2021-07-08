@@ -1,3 +1,7 @@
+v1.1.6 2021-07-08 Updated man pages
+
+ - Updated man pages to document the --only-write-xa and --ignore-no_md5sums options.  No code changes.
+
 v1.1.5 2021-07-08 Added ignore-no_md5sums option
 
  - Added --ignore-no_md5sums option that forces processing of directories even when a .no_md5sums file is present.

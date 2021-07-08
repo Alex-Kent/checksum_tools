@@ -130,8 +130,17 @@ Do not recurse into subdirectories
 Don't cross filesystem boundaries while recursing
 
 .TP
+.B \-\-ignore\-no_md5sums
+If set then directories will be processed even if they contain a \f(CW.no_md5sums\fR file.
+
+.TP
 .B \-\-never\-rewrite\-checksums
 If set then neither extended attributes nor the \f(CW.md5sums\fR files will be written to under any circumstances.
+
+.TP
+.B \-\-only\-write\-xa
+If set then checksums will only be written to extended attributes (\f(CW.md5sums\fR files will be not be written to under any circumstances).
+
 
 .SH AUTHOR
 
