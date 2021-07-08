@@ -4005,6 +4005,23 @@ EOF
 			}
 		},
 		
+		# === only-write-xa ===
+		'only-write-xa' => { 
+			'short'          => undef, 
+			'long'           => '--only-write-xa', 
+			'core-option'    => 1,
+			'default'        => 0,
+			'takes-arg'      => 0,
+			'set-additional' => undef,
+			'error-check'    => undef,
+			'usage'          => { 'en' => <<EOF
+--only-write-xa            If set then checksums will only be written to 
+                           extended attributes (.md5sums files will be not 
+                           be written to under any circumstances).
+EOF
+			}
+		},
+		
 		# === overwrite ===
 		'overwrite' => { 
 			'short'          => '-O', 
@@ -6106,6 +6123,7 @@ sub ProcessDir($$$$$) {
 	}
 	
 	my $never_rewrite_checksums = $$_OPTIONS{'never-rewrite-checksums'};
+	my $only_write_xa           = $$_OPTIONS{'only-write-xa'};
 	
 	# *** Loop through objects to check ***
 	my $new_count = 0;     # === Number of currently extant files found in checksum file ===
@@ -6140,6 +6158,7 @@ sub ProcessDir($$$$$) {
 	# *** Write checksum file if needed ***
 	if (
 	     ( ! $never_rewrite_checksums ) &&
+	     ( ! $only_write_xa ) &&
 	     (
 	       (
 	         ( $scan_mode == SCAN_MODE_DIRECTORY ) && 

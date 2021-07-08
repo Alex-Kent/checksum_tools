@@ -1,3 +1,7 @@
+v1.1.4 2021-07-08 Added only-write-xa option
+
+ - Added --only-write-xa option that supresses writes to .md5sums files.
+
 v1.1.3 2021-05-11 Added quiet and silent options, minor improvements
 
  - Added --quiet (-q) option that supresses progress messages.

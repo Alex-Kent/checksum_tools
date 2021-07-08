@@ -498,7 +498,11 @@ This command always recomputes the MD5 checksums but never writes them.
 
 ## Excluding directories
 
-If a directory contains a file name `.no_md5sums` then no checksums will be computed and no `.md5sums` files will be created in the directory or any of its subdirectories.  This is needed for certain system directories where the presence of any extraneous files causes errors (in this case `.no_md5sums` should be placed in the parent of the problematic directory).  It can also be used to block processing of temporary directories, database directories, or directories that contain extraordinarily large numbers of file (by placing `.no_md5sums` in the directory to skip).
+If a directory contains a file name `.no_md5sums` then no checksums will be computed and no `.md5sums` files will be created in the directory or any of its subdirectories.  This is needed for certain system directories where the presence of any extraneous files causes errors (in this case `.no_md5sums` should be placed in the parent of the problematic directory).  It can also be used to block processing of temporary directories, database directories, or directories that contain extraordinarily large numbers of files (by placing `.no_md5sums` in the directory to skip).
+
+## Supressing creation of `.md5sums` files
+
+By default `.md5sums` files are written.  To suppress this, pass the `--only-write-xa` option on the commandline.  With this option active, checksums will only be written to files' extended attributes.
 
 ## Requisites and additional files
 
