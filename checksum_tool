@@ -4005,6 +4005,22 @@ EOF
 			}
 		},
 		
+		# === ignore-no_md5sums ===
+		'ignore-no_md5sums' => { 
+			'short'          => undef, 
+			'long'           => '--ignore-no_md5sums', 
+			'core-option'    => 1,
+			'default'        => 0,
+			'takes-arg'      => 0,
+			'set-additional' => undef,
+			'error-check'    => undef,
+			'usage'          => { 'en' => <<EOF
+--ignore-no_md5sums        If set then directories will be processed even if 
+                           they contain a .no_md5sums file.
+EOF
+			}
+		},
+		
 		# === only-write-xa ===
 		'only-write-xa' => { 
 			'short'          => undef, 
@@ -6084,7 +6100,10 @@ sub ProcessDir($$$$$) {
 	# *** Directory enter callback ***
 	CallDirectoryEnterCallback($phase, $_OPTIONS, $_user, $object);
 	
-	if ( $$_OPTIONS{'skip-if-no_md5sums-present'} ) {
+	if (
+	     (   $$_OPTIONS{'skip-if-no_md5sums-present'} ) && 
+	     ( ! $$_OPTIONS{'ignore-no_md5sums'} )
+	   ) {
 		# === Don't process directry if it has a .no_md5sums file ===
 		if ( $no_scan ) {
 			unless ( $$_OPTIONS{quiet} ) {
