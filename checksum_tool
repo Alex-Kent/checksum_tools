@@ -16,7 +16,7 @@ use strict;
 
 $| = 1;
 
-my $VERSION_STRING = '1.1.10';
+my $VERSION_STRING = '1.1.11';
 
 # Files to completely ignore
 my %ignore = map { $_ => 1 } ( '.md5sums', '.no_md5sums', '.img-md5sums', '.atom', '.DS_Store', '.directory', '.folder.png', 'Thumbs.db', 'Desktop.ini', 'BBThumbs.dat', '.DS_Store', 'swapfile' );
@@ -5791,10 +5791,17 @@ sub GatherMetadata($$$$$$$$$$) {
 			
 			# === Recompute checksums if needed ===
 			if ( 
-			       $compute_always || 
-			     ( $compute_missing && $old_metadata_missing ) ||
-			     ( $stat_mtime != $old_mtime ) || 
-			     ( $stat_size != $old_size ) 
+			     (
+			         $compute_always || 
+			       ( $compute_missing && $old_metadata_missing ) ||
+			       ( $stat_mtime != $old_mtime ) || 
+			       ( $stat_size != $old_size ) 
+			     )
+			     &&
+			     (
+			       ( ! -l $filepath ) && 
+			       ( -f $filepath)
+			     )
 			   ) {
 				$md5 = ComputeMD5($filepath, $_OPTIONS, $_STRINGS);
 				%metadata = ( md5=>$md5,      mtime=>$stat_mtime, size=>$stat_size, source=>'computed',  old_md5=>$old_md5,  old_md5_mtime=>$old_mtime,  old_md5_size=>$old_size,  md5_mtime=>$stat_mtime, md5_size=>$stat_size, path=>$directory, name=>$name, type=>$$_extant{'ALL'}{$name}, is_link=>$$_extant{'link'}{$name}, dev=>$stat_dev, ino=>$stat_ino );
