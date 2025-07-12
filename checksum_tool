@@ -16,7 +16,7 @@ use strict;
 
 $| = 1;
 
-my $VERSION_STRING = '1.1.7';
+my $VERSION_STRING = '1.1.8';
 
 # Files to completely ignore
 my %ignore = map { $_ => 1 } ( '.md5sums', '.no_md5sums', '.img-md5sums', '.atom', '.DS_Store', '.directory', '.folder.png', 'Thumbs.db', 'Desktop.ini', 'BBThumbs.dat', '.DS_Store', 'swapfile' );
@@ -46,8 +46,6 @@ sub COOK(\%);
 
 # Get running command's name
 my $COMMAND = File::Basename::basename($0);
-
-#print STDERR "Command: $COMMAND\n";
 
 my %OPTIONS = ();
 my @OBJECTS = ();
@@ -84,12 +82,10 @@ my %user = ( );
 
 # === Call command's initialize callback ===
 if ( defined $OPTIONS{'_COMMAND'}{'initialize'} ) {
-	#print "$OPTIONS{'_COMMAND'}{'initialize'}\n";
 	&{ $OPTIONS{'_COMMAND'}{'initialize'} }( \%user, \@OBJECTS, \%OPTIONS );
 }
 
 
-#print "Phases: $OPTIONS{'_COMMAND'}{'phases'}\n";
 unless ( ( $OPTIONS{'_COMMAND'}{'phases'} == 1 ) || ( $OPTIONS{'_COMMAND'}{'phases'} == 2 ) ) {
 	print STDERR Localize( $STRINGS{'INTERNAL-ERROR'} ) . " " . Localize( $STRINGS{'phases-not-specified'} ) . "\n";
 	exit;
@@ -110,11 +106,8 @@ if ( $OPTIONS{'_COMMAND'}{'phases'} == 1 ) {
 	# === Loop through all objects passed on the commandline ===
 	foreach my $object ( @OBJECTS) {
 		
-		#print "\n\n";
-		
 		# === Call phase 1 per-tree pre-scan callback ===
 		if ( defined $OPTIONS{'_COMMAND'}{'phase-1-per-tree-pre'} ) {
-			#print "$OPTIONS{'_COMMAND'}{'phase-1-per-tree-pre'}\n";
 			&{ $OPTIONS{'_COMMAND'}{'phase-1-per-tree-pre'} }( \%user, $object, \%OPTIONS );
 		}
 		
@@ -124,7 +117,6 @@ if ( $OPTIONS{'_COMMAND'}{'phases'} == 1 ) {
 		
 		# === Call phase 1 per-tree post-scan callback ===
 		if ( defined $OPTIONS{'_COMMAND'}{'phase-1-per-tree-post'} ) {
-			#print "$OPTIONS{'_COMMAND'}{'phase-1-per-tree-post'}\n";
 			&{ $OPTIONS{'_COMMAND'}{'phase-1-per-tree-post'} }( \%user, $object, $returned, \%OPTIONS );
 		}
 		
@@ -140,11 +132,8 @@ if ( $OPTIONS{'_COMMAND'}{'phases'} == 1 ) {
 	# === Loop through all objects passed on the commandline ===
 	foreach my $object ( @OBJECTS) {
 		
-		#print "\n\n";
-		
 		# === Call phase 1 per-tree pre-scan callback ===
 		if ( defined $OPTIONS{'_COMMAND'}{'phase-1-per-tree-pre'} ) {
-			#print "$OPTIONS{'_COMMAND'}{'phase-1-per-tree-pre'}\n";
 			&{ $OPTIONS{'_COMMAND'}{'phase-1-per-tree-pre'} }( \%user, $object, \%OPTIONS );
 		}
 		
@@ -154,7 +143,6 @@ if ( $OPTIONS{'_COMMAND'}{'phases'} == 1 ) {
 		
 		# === Call phase 1 per-tree post-scan callback ===
 		if ( defined $OPTIONS{'_COMMAND'}{'phase-1-per-tree-post'} ) {
-			#print "$OPTIONS{'_COMMAND'}{'phase-1-per-tree-post'}\n";
 			&{ $OPTIONS{'_COMMAND'}{'phase-1-per-tree-post'} }( \%user, $object, $returned, \%OPTIONS );
 		}
 		
@@ -162,10 +150,7 @@ if ( $OPTIONS{'_COMMAND'}{'phases'} == 1 ) {
 	
 	# *** Phase 2 ***
 	
-	#print "\n\n";
-	
 	if ( defined $OPTIONS{'_COMMAND'}{'phase-2-pre'} ) {
-		#print "$OPTIONS{'_COMMAND'}{'phase-2-pre'}\n";
 		&{ $OPTIONS{'_COMMAND'}{'phase-2-pre'} }( \%user, $phase_2_object, \%OPTIONS );
 	}
 	
@@ -174,14 +159,12 @@ if ( $OPTIONS{'_COMMAND'}{'phases'} == 1 ) {
 	my $returned = ProcessDir(2, $phase_2_object, \%user, \%OPTIONS, \%STRINGS);
 	
 	if ( defined $OPTIONS{'_COMMAND'}{'phase-2-post'} ) {
-		#print "$OPTIONS{'_COMMAND'}{'phase-2-post'}\n";
 		&{ $OPTIONS{'_COMMAND'}{'phase-2-post'} }( \%user, $phase_2_object, $returned, \%OPTIONS );
 	}
 }
 
 
 if ( defined $OPTIONS{'_COMMAND'}{'finalize'} ) {
-	#print "$OPTIONS{'_COMMAND'}{'finalize'}\n";
 	&{ $OPTIONS{'_COMMAND'}{'finalize'} }( \%user, \%OPTIONS );
 }
 
@@ -1790,7 +1773,6 @@ ALIAS	'user-finalize-loop' => '{find_dupes}{user-finalize-loop}',
 					my $fullpath = File::Spec->catfile( $file->{'directory'}, $file->{'name'} );
 					print Localize( $STRINGS{'UNLINK'} ) . " $fullpath\n";
 					unless ($$_OPTIONS{'no-act'}) {
-						#print "( unlinking )\n";
 						print "$?, $!\n" unless (unlink "$fullpath");
 					}
 					
@@ -1891,7 +1873,6 @@ EOF
 			# *** find_dupes  :  initialize ***
 			'initialize' => sub {
 				my ( $_user, $_OBJECTS, $_OPTIONS ) = @_;
-				#print "find_dupes  :  initialize\n";
 				
 				if ( scalar(@$_OBJECTS) == 1 ) {
 					
@@ -1922,7 +1903,6 @@ EOF
 			# *** find_dupes  :  phase-1-per-object ***
 			'phase-1-per-object' => sub {
 				my ( $_user, $directory, $object, $_metadata, $_OPTIONS ) = @_;
-				#print "phase-1-per-object\n";
 				
 				my $md5      = $$_metadata{'md5'};
 				my $md5_size = $$_metadata{'md5_size'};
@@ -1954,7 +1934,6 @@ EOF
 			# *** find_dupes  :  phase-2-per-object ***
 			'phase-2-per-object' => sub {
 				my ( $_user, $directory, $object, $_metadata, $_OPTIONS ) = @_;
-				#print "phase-2-per-object\n";
 				
 				my $md5      = $$_metadata{'md5'};
 				my $md5_size = $$_metadata{'md5_size'};
@@ -1981,7 +1960,6 @@ EOF
 			
 			'user-finalize-loop' => sub {
 				my ( $_user, $dupe_callback, $keep_callback, $_OPTIONS ) = @_;
-				#print "user-finalize-loop( $_user, $dupe_callback, $keep_callback, $_OPTIONS )\n";
 				
 				$$_user{'dupe string'} = Localize( $$_STRINGS{'DUPE'} );
 				$$_user{'keep string'} = Localize( $$_STRINGS{'keep'} );
@@ -2001,7 +1979,6 @@ EOF
 				
 				if ( $$_OPTIONS{'_COMMAND'}{'phases'} == 1 ) {
 					# === Single phase ===
-					#print "Single phase\n";
 					
 					my $src = $$_user{'src'};
 					
@@ -2041,7 +2018,6 @@ EOF
 					
 				} else {
 					# === Two phase ===
-					#print "Two phase\n";
 					
 					# === Gather checksums for all files in each directory ===
 					my $src = $$_user{'src'};
@@ -2049,7 +2025,6 @@ EOF
 					
 					# === Loop through all the checksums in the source directory ===
 					foreach my $md5 (keys %$src) {
-						#print "src: $md5\n";
 						if (defined $$dst{$md5}) {
 							# === If checksum match found in the destination directory ===
 							my $shown_md5 = $md5;
@@ -2072,14 +2047,12 @@ EOF
 							
 							if ( scalar(@non_link_src) && scalar(@non_link_dst) ) {
 								foreach my $file (@non_link_src) {
-									#printf("%-49s DUPE\t%s\t%s\n", $shown_md5, $file->{'name'}, $file->{'directory'});
 									&$encode_filename($file);
 									&{ $dupe_callback }( $md5, $shown_md5, $file, $_user, $_OPTIONS );
 								$shown_md5 = "";
 								}
 								# === Display destination directory's matching filenames and paths ===
 								foreach my $file (@non_link_dst) {
-									#printf("%-49s keep\t%s\t%s\n", $shown_md5, $file->{'name'}, $file->{'directory'});
 									&$encode_filename($file);
 									&{ $keep_callback }( $md5, $shown_md5, $file, $_user, $_OPTIONS );
 									$shown_md5 = "";
@@ -2823,7 +2796,6 @@ EOF
 			# *** prune_dirs  :  phase-1-dir-enter ***
 			'phase-1-dir-enter' => sub {
 				my ( $_user,  $directory,  $_OPTIONS ) = @_;
-				#print "phase-1-dir-enter( $_user,  $directory,  $_OPTIONS )\n";
 				
 				# Set number of non-ignored files to 0
 				$$_user{'this-file-count'}{$directory} = 0;
@@ -2833,15 +2805,12 @@ EOF
 			# *** prune_dirs  :  phase-1-per-object ***
 			'phase-1-per-object' => sub {
 				my ( $_user, $directory, $object, $_metadata, $_OPTIONS ) = @_;
-				#print "phase-1-per-object( $_user, $directory, $object, $_metadata, $_OPTIONS )\n";
 				
 				# If object is a symlink
 				if ( $$_metadata{'is_link'} ) {
-					#print "LINK: $directory/$object\n";
 					
 					if ( $$_OPTIONS{'ignore-symlinks'} ) {
 						# Don't count anything symlinked as existing
-						#print "SKIP link to $$_metadata{'type'}: $directory/$object\n";
 						return;
 					}
 				}
@@ -2850,15 +2819,12 @@ EOF
 				
 				# Object is a regular file
 				if ( $$_metadata{'type'} eq 'file' ) {
-					#print "FOUND file: $directory/$object\n";
 					$$_user{'this-file-count'}{$directory}++;
 					return;
 				
 				}
 				
 				# Other object types are ignored
-				#print "SKIP $$_metadata{'type'}: $directory/$object\n";
-				
 				return;
 			},
 			
@@ -2887,8 +2853,6 @@ EOF
 				# Get number of non-deleted files
 				my $return = $$_user{'this-file-count'}{$directory};
 				
-				#print "Leaving $directory : $return files found\n";
-				
 				# Remove hash entry
 				delete $$_user{'this-file-count'}{$directory};
 				
@@ -2899,7 +2863,6 @@ EOF
 			# *** prune_dirs  :  phase-1-per-tree-post ***
 			'phase-1-per-tree-post' => sub {
 				my ( $_user, $object, $returned, $_OPTIONS ) = @_;
-				#print "Completed scan of $object : $returned files found\n";
 				
 				# === Delete object if empty ===
 				if ($returned == 0) {
@@ -2988,7 +2951,6 @@ EOF
 			# *** phase-1-per-object ***
 			'phase-1-per-object' => sub {
 				my ( $_user, $directory, $object, $_metadata, $_OPTIONS ) = @_;
-				#print "phase-1-per-object( $_user, $directory, $object, $_metadata, $_OPTIONS )\n";
 				
 				my $path = File::Spec->catfile($directory, $object);
 				my $original_path = getfattr( $path, 'meta.original_path', { namespace => 'user' } );
@@ -3226,10 +3188,6 @@ ALIAS	'user-finalize-loop' => '{find_dupes}{user-finalize-loop}',
 				# src or dst absolute -> absolute
 				# otherwise relative
 				# can be overrideen with commandline options
-				
-				#print Dumper( $_user );
-				
-				#print Dumper( $_OPTIONS );
 				
 				my $dupe = Localize( $$_STRINGS{'DUPE'} );
 				my $keep = Localize( $$_STRINGS{'keep'} );
@@ -3514,7 +3472,6 @@ EOF
 			# *** verify_checksums  :  phase-1-per-object ***
 			'phase-1-per-object' => sub {
 				my ( $_user, $directory, $object, $_metadata, $_OPTIONS ) = @_;
-				#print "phase-1-per-object( $_user, $directory, $object, $_metadata, $_OPTIONS )\n";
 				
 				use constant MD5_changed     => 1;
 				use constant MD5_was_blank   => 2;
@@ -3544,7 +3501,6 @@ EOF
 				}
 				
 				if ( $changes_seen ) {
-					#print Dumper( $_metadata );
 					
 					my @changes = ();
 					
@@ -3857,7 +3813,6 @@ EOF
 			'set-additional' => undef,
 			'error-check'    => sub {
 				my ($COMMAND, $OPTION, $_options, $_targets) = @_;
-				#print "$$_options{$OPTION}\n";
 				unless ( $$_options{$OPTION} =~ /^(octal|hex|HEX|shell|uri|URI)$/ ){
 					return [ 'ERROR', { 'en' => 'Parameter for escape-filenames can only be one of octal, hex, HEX, shell, uri, or URI.' } ];
 				}
@@ -4333,7 +4288,6 @@ sub GetOptions($$$$$$$) {
 			if ( ( defined $valid_short_options{$arg} ) && 
 			     ( $valid_short_options{$arg}{'takes-arg'} ) ) {
 				# Current argument is a short option that takes an additional argument
-				#print STDERR "$arg : Short option taking parameter\n";
 				
 				# Make sure we're not in the midst of combined options
 				if ( @split ) {
@@ -4370,12 +4324,8 @@ sub GetOptions($$$$$$$) {
 				
 				# Grab the next commandline option and use it as the current option's parameter
 				$$_OPTIONS{ $hash_key } = shift @$_ARGV;
-				#print "$arg -> Setting \$\$_OPTIONS{ $hash_key } to $$_OPTIONS{ $hash_key }\n";
 				
 				$option_given_as{ $hash_key } = $arg;
-				
-				#my $blank = $arg; $blank =~ s/./ /g;
-				#print STDERR "$blank   Parameter = $$_OPTIONS{ $valid_short_options{$arg}{'NAME'} }\n";
 				
 				# END - Short option taking parameter
 				
@@ -4384,7 +4334,6 @@ sub GetOptions($$$$$$$) {
 			} elsif ( ( defined $valid_long_options{$arg} ) && 
 			          ( $valid_long_options{$arg}{'takes-arg'} ) ) {
 				# Current argument is a long option that takes an additional argument
-				#print STDERR "$arg : Long option taking parameter\n";
 				
 				# Make sure we're not at the end of the commandline
 				unless ( @$_ARGV ) {
@@ -4407,20 +4356,14 @@ sub GetOptions($$$$$$$) {
 				
 				# Grab the next commandline option and use it as the current option's parameter
 				$$_OPTIONS{ $hash_key } = shift @$_ARGV;
-				#print "$arg -> Setting \$\$_OPTIONS{ $hash_key } to $$_OPTIONS{ $hash_key }\n";
 				
 				$option_given_as{ $hash_key } = $arg;
-				
-				#my $blank = $arg; $blank =~ s/./ /g;
-				#print STDERR "$blank : Parameter = $$_OPTIONS{ $valid_long_options{$arg}{'NAME'} }\n";
 				
 				# END - Long option taking parameter
 			
 				
 			} elsif ( defined $valid_short_options{$arg} ) {
 				# Current argument is a regular short option
-				
-				#print STDERR "$arg : Short option\n";
 				
 				# Determine the key to use
 				my $hash_key = ( defined $valid_short_options{$arg}{'set-key'} ) 
@@ -4434,7 +4377,6 @@ sub GetOptions($$$$$$$) {
 				
 				# Note presence of current option
 				$$_OPTIONS{ $hash_key } = $hash_value;
-				#print "$arg -> Setting \$\$_OPTIONS{ $hash_key } to $hash_value\n";
 				
 				$option_given_as{ $hash_key } = $arg;
 				
@@ -4442,7 +4384,6 @@ sub GetOptions($$$$$$$) {
 			
 			} elsif ( defined $valid_long_options{$arg} ) {
 				# Current argument is a regular long option
-				#print STDERR "$arg : Long option\n";
 				
 				# Determine the key to use
 				my $hash_key = ( defined $valid_long_options{$arg}{'set-key'} ) 
@@ -4456,7 +4397,6 @@ sub GetOptions($$$$$$$) {
 				
 				# Note presence of current option
 				$$_OPTIONS{ $hash_key } = $hash_value;
-				#print "$arg -> Setting \$\$_OPTIONS{ $hash_key } to $hash_value\n";
 				
 				$option_given_as{ $valid_long_options{$arg}{'NAME'} } = $arg;
 				
@@ -4465,11 +4405,6 @@ sub GetOptions($$$$$$$) {
 			
 			} elsif ( $arg eq '--' ) {
 				# Treat all further commandline arguments as objects to process
-				#print STDERR "$arg : Treating all further commandline arguments as objects to process\n";
-				
-				#foreach my $arg ( @$_ARGV ) {
-				#	print STDERR "$arg : Object to process\n";
-				#}
 				
 				push @$_OBJECTS, @$_ARGV;
 				@$_ARGV = ();
@@ -4489,7 +4424,6 @@ sub GetOptions($$$$$$$) {
 			
 			} else {
 				# Not an option; treat it as an object to process
-				#print STDERR "$arg : Object to process\n";
 				
 				push @$_OBJECTS, $arg;
 			}
@@ -4497,8 +4431,6 @@ sub GetOptions($$$$$$$) {
 		} # END - Loop through current commandline argument
 		
 	} # END - Loop through all commandline arguments
-	
-#	print "\n";
 	
 	
 	# === Determine command ===
@@ -4522,7 +4454,6 @@ sub GetOptions($$$$$$$) {
 			unless ( $key eq $COMMAND ) {
 				# Command named by option not the same as the one used used to run the program
 				$ACTUAL_COMMAND = $key;
-				#print "COMMAND: $key\n";
 				$command_count++;
 			}
 		}
@@ -4618,19 +4549,15 @@ sub GetOptions($$$$$$$) {
 	
 	# === Set default values (default) ===
 	
-#	print "Set default values (default)\n";
 	
 	# Loop through options...
 	foreach my $option ( sort keys %$_AVAILABLE_OPTIONS ) {
 		if ( ( ! exists $$_OPTIONS{$option} ) &&
 		     ( defined $$_AVAILABLE_OPTIONS{ $option } ) &&
 		     ( defined $$_AVAILABLE_OPTIONS{ $option }{ 'default' } ) ) {
-#			print "\tSetting \$\$_OPTIONS{$option} = $$_AVAILABLE_OPTIONS{ $option }{ 'default' };\n";
 			$$_OPTIONS{$option} = $$_AVAILABLE_OPTIONS{ $option }{ 'default' };
 		}
 	}
-	
-#	print "\n";
 	
 	
 	# === Set default values (for commands) ===
@@ -4641,21 +4568,15 @@ sub GetOptions($$$$$$$) {
 	
 	# === Perform custom option-setting (set-additional) ===
 	
-#	print "Perform custom option-setting (set-additional)\n";
-	
 	# Loop through options...
 	foreach my $option ( sort keys %$_OPTIONS ) {
-#		print "\t$option\n";
 		if ( ( exists $$_OPTIONS{$option} ) &&
 		     ( defined $$_AVAILABLE_OPTIONS{ $option } ) &&
 		     ( defined $$_AVAILABLE_OPTIONS{ $option }{ 'set-additional' } ) ) {
 			my ( $key, $value ) = @{ $$_AVAILABLE_OPTIONS{ $option }{ 'set-additional' } };
-#			print "\t\tSetting $key to $value\n";
 			$$_OPTIONS{$key} = $value;
 		}
 	}
-	
-#	print "\n";
 	
 	
 	# === Run options' validation code (error-check) ===
@@ -4668,7 +4589,6 @@ sub GetOptions($$$$$$$) {
 		if ( ( exists $$_AVAILABLE_OPTIONS{ $option } ) &&
 		     ( defined $$_AVAILABLE_OPTIONS{ $option }{ 'error-check' } ) ) {
 			
-			#print "Calling error-check for $option\n";
 			my $_exceptions = &{ $$_AVAILABLE_OPTIONS{ $option }{ 'error-check' } }( $$_OPTIONS{'COMMAND'}, $option, $_OPTIONS, $_OBJECTS );
 			
 			if ( ref $_exceptions ) {
@@ -4698,7 +4618,6 @@ sub GetOptions($$$$$$$) {
 		if ( ( exists $$_AVAILABLE_OPTIONS{ $option } ) &&
 		     ( defined $$_AVAILABLE_OPTIONS{ $option }{ 'initialize' } ) ) {
 			
-			#print "Calling error-check for $option\n";
 			my $_exceptions = &{ $$_AVAILABLE_OPTIONS{ $option }{ 'initialize' } }( $$_OPTIONS{'COMMAND'}, $option, $_OPTIONS, $_OBJECTS );
 			
 			if ( ref $_exceptions ) {
@@ -4756,34 +4675,6 @@ sub GetOptions($$$$$$$) {
 		$$_OPTIONS{'_CP'} = [ split /\s+/, $$_OPTIONS{'CP'} ];
 	}
 	
-	
-#	print "\n--------------------------------------------------------------------------------\n\n";
-#	
-#	
-#	print "Command:\n";
-#	
-#	print "$$_OPTIONS{'COMMAND'}\n";
-#	
-#	print Dumper( $$_OPTIONS{'_COMMAND'} );
-#	
-#	print "\n";
-#	
-#	
-#	print "Options:\n";
-#	foreach my $key ( sort keys %$_OPTIONS ) {
-#		print "$key -> $$_OPTIONS{$key}\n";
-#	}
-#	
-#	print "\n";
-#	
-#	
-#	print "Objects:\n";
-#	foreach my $object ( @$_OBJECTS ) {
-#		print "$object\n";
-#	}
-#	
-#	
-#	print "\n--------------------------------------------------------------------------------\n\n";
 	
 	# === Return the name of the actual command being run ===
 	return $ACTUAL_COMMAND;
@@ -5110,7 +5001,6 @@ sub GetXA($$) {
 	my $xa_combined  = getfattr( $path, '_', { namespace => 'user' } );
 	if ($xa_combined =~ /^([0-9a-fA-F]{32}):(\d+):(\d+)$/) {
 		( $xa_md5, $xa_md5_mtime, $xa_md5_size ) = ( $1, $2, $3 );
-		#print "$path: Checksum v2: $xa_md5, $xa_md5_mtime, $xa_md5_size\n";
 		$found_version = 2;
 		
 	} else {
@@ -5127,18 +5017,13 @@ sub GetXA($$) {
 		     ( defined $xa_md5_mtime ) && 
 		     ( defined $xa_md5_size ) 
 		   ) {
-			#print "$path: Checksum v1: $xa_md5, $xa_md5_mtime, $xa_md5_size\n";
 			$found_version = 1;
 			$rewrite = 1;
 		}
 	}
 	
-	#print "$path: No checksum found in XA\n" unless ($found_version);
-	
 	if ( $rewrite && ( ! $$_OPTIONS{'never-rewrite-checksums'} ) ) {
 		ClearXA($path, $_OPTIONS);
-		#print STDERR "Writing XA\n";
-		#print join( "\n", get_stack_trace() ) . "\n";
 		WriteXA($path, { 'md5' => $xa_md5, 'mtime' => $xa_md5_mtime, 'size' => $xa_md5_size }, $_OPTIONS);
 	}
 	
@@ -5152,7 +5037,6 @@ sub GetXA($$) {
 # === Write current metadata to file's extended attributes ===
 sub WriteXA($$$) {
 	my ($filepath, $_metadata, $_OPTIONS) = @_;
-	#print Dumper($_metadata);
 	#`setfattr -n user.md5       -v $$_metadata{md5}   "$filepath"`;
 	#`setfattr -n user.md5_mtime -v $$_metadata{mtime} "$filepath"`;
 	#`setfattr -n user.md5_size  -v $$_metadata{size}  "$filepath"`;
@@ -5227,7 +5111,6 @@ sub Unlink($$$$) {
 	
 	if ( $path_exists ) {
 		# A backed-up copy of the 
-		#print "OVERWRITE\n";
 		if ( exists $$_OPTIONS{'OVERWRITE'} ) {
 			# Either --overwrite or --preserve option was set
 			
@@ -5296,8 +5179,6 @@ sub UnlinkAlways($$$$) {
 sub MkdirHier($$$$) {
 	my ($dir, $_user, $_OPTIONS, $_STRINGS) = @_;
 	
-	#print "MkdirHier($dir, ...)\n";
-	
 	# Quick check
 	
 	return if (-d $dir);
@@ -5305,8 +5186,6 @@ sub MkdirHier($$$$) {
 	$dir =~ s/\/*$//g;
 	
 	if ( $$_OPTIONS{'no-act'} ) {
-		#print "exists \$\$_user{'FAKE_FILESYSTEM'}{$dir} : ".$$_user{'FAKE_FILESYSTEM'}{$dir}."\n";
-		#print "\$\$_user{'FAKE_FILESYSTEM'}{$dir} : $$_user{'FAKE_FILESYSTEM'}{$dir}\n";
 		return if ( 
 		            ( exists $$_user{'FAKE_FILESYSTEM'}{$dir} ) &&
 		            ( $$_user{'FAKE_FILESYSTEM'}{$dir} eq 'd' )
@@ -5317,7 +5196,6 @@ sub MkdirHier($$$$) {
 	
 	my @dir = File::Spec->splitdir($dir);
 	my @cur_path = ();
-	#print File::Spec->catdir(@dir)."\n";
 	while ( scalar @dir ){
 		push @cur_path, shift @dir;
 		my $cur_path = File::Spec->catdir(@cur_path);
@@ -5341,11 +5219,8 @@ sub MkdirHier($$$$) {
 			exit;
 		}
 		
-		#print "?$cur_path -> $path_exists : $dir_exists\n";
-		
 		if ( ! $dir_exists ) {
 			# Create directory
-			#print Localize( $STRINGS{'MKDIR'} ) . " $cur_path\n";
 			if ($$_OPTIONS{'no-act'}) {
 				$$_user{'FAKE_FILESYSTEM'}{$cur_path} = 'd'; # Fake creation
 			} else {
@@ -5399,7 +5274,6 @@ sub SystemCopy($$$$$) {
 		if ($$_OPTIONS{'no-act'}) {
 			$$_user{'FAKE_FILESYSTEM'}{$dst} = $$_user{'FAKE_FILESYSTEM'}{$src}; # Fake copy
 		} else {
-			#print "'" . join( "', '", ( @{$$_OPTIONS{'_CP'}}, $src, $dst ) ) . "'\n";
 			if ( system @{$$_OPTIONS{'_CP'}}, $src, $dst ) {
 				print STDERR Localize( $$_STRINGS{'ERROR'} ) . " $?, $!\n";
 				exit;
@@ -5460,8 +5334,6 @@ sub MoveFile($$$$$) {
 	if ( $src_dev != $dst_dev ) {
 		# Cross-device move
 		# Use commandline copy followed by deletion of original
-		
-		#print "Cross-device move\n";
 		
 		# Copy using system's cp command
 		SystemCopy( $src, $dst, $_user, $_OPTIONS, $_STRINGS);
@@ -5628,11 +5500,9 @@ sub CreateObjectList($$$$$$) {
 	if ( -d $$_object ) {
 		# Directory mode
 		
-		#print "Directory mode\n";
 		$$_scan_mode = 	SCAN_MODE_DIRECTORY;
 		
 		$$_directory = $$_object;
-		#print "Directory: $directory\n";
 		
 		# === Determine the device (for use with the --one-filesystem option) ===
 		($$_directory_device, undef, undef, undef, undef, undef, undef, undef, undef, undef, undef, undef, undef) = stat($$_directory);
@@ -5645,7 +5515,6 @@ sub CreateObjectList($$$$$$) {
 		while (my $dentry = readdir $DIR) {
 			next if ($dentry =~ /^\.\.?$/);
 			push @$_objects, $dentry;
-			#print "Entry:  $dentry\n";
 			
 			$$_no_scan = 1 if ( $dentry eq '.no_md5sums' );
 		}
@@ -5654,15 +5523,11 @@ sub CreateObjectList($$$$$$) {
 	} else {
 		# Single object mode
 		
-		#print "Single-object mode\n";
 		$$_scan_mode = SCAN_MODE_SINGLE_OBJECT;
 		
 		$$_directory = dirname( $$_object );
 		my $object_filename = basename( $$_object );
 		my $tmp_path;
-		
-		#print "Directory: $directory\n";
-		#print "Filename:  $object_filename\n";
 		
 		# Look for checksums file
 		$tmp_path = File::Spec->catfile( $$_directory, '.md5sums' );
@@ -5694,12 +5559,10 @@ sub	CallDirectoryEnterCallback($$$$) {
 	my ($phase, $_OPTIONS, $_user, $object);
 	if ( $phase == 1 ) {
 		if ( defined $$_OPTIONS{'_COMMAND'}{'phase-1-dir-enter'} ) {
-			#print "$$_OPTIONS{'_COMMAND'}{'phase-1-dir-enter'}\n";
 			&{ $$_OPTIONS{'_COMMAND'}{'phase-1-dir-enter'} }( $_user, $object, $_OPTIONS );
 		}
 	} else { # phase 2
 		if ( defined $$_OPTIONS{'_COMMAND'}{'phase-2-dir-enter'} ) {
-			#print "$$_OPTIONS{'_COMMAND'}{'phase-2-dir-enter'}\n";
 			&{ $$_OPTIONS{'_COMMAND'}{'phase-2-dir-enter'} }( $_user, $object, $_OPTIONS );
 		}
 	}
@@ -5716,8 +5579,6 @@ sub ClassifyObject($$$) {
 	my ( $_objects, $directory, $_extant ) = @_;
 	# Loop through objects list and note directories and files...
 	foreach my $dentry ( @$_objects ) {
-		#print "entry: $dentry\n";
-		#print Dumper( \%extant ); print "\n\n";
 		
 		my $type;
 		if (-d "$directory/$dentry") {
@@ -5760,7 +5621,6 @@ sub ReadChecksumsFile($$$$) {
 	my ( $_directory, $_version, $_old_count, $_old ) = @_;
 	
 	my $filename = File::Spec->catfile($$_directory, '.md5sums');
-	#print "Using checksum file $filename\n";
 	open SUM, "<", $filename or die "Fatal: $! while opening \"".$filename."\"\n";
 	
 	my $first_line = undef;
@@ -5789,8 +5649,6 @@ sub ReadChecksumsFile($$$$) {
 				$cooked_name =~ s/\\(.)/\1/g;
 				$$_old{$cooked_name} = { md5=>$md5, mtime=>$mtime, size=>$size, path=>$$_directory, name=>$name, line=>$line};
 				LOG( "v2:\t\$\$_old{$cooked_name} = { md5=>$md5, mtime=>$mtime, size=>$size, path=>$$_directory, name=>$name, line=>$line};\n" );
-				#print "$line\n";
-				#print "v2:\t\$\$_old{$cooked_name} = { md5=>$md5, mtime=>$mtime, size=>$size, path=>$$_directory, name=>$name, line=>$line};\n";
 				$$_old_count++;
 			}
 			
@@ -5839,7 +5697,6 @@ sub GatherMetadata($$$$$$$$$$) {
 	
 	my $filepath = File::Spec->catfile( $directory, $name );
 	LOG( "Checking $filepath\n" );
-	#print "Checking $filepath\n";
 	
 	# === Get file's current modify time and size ===
 	my ($stat_dev, $stat_ino, $stat_mtime, $stat_size) = StatFile($filepath);
@@ -5996,14 +5853,10 @@ sub CallPerObjectCallback($$$$$$) {
 	
 	if ( $phase == 1 ) {
 		if ( defined $$_OPTIONS{'_COMMAND'}{'phase-1-per-object'} ) {
-			#print "$$_OPTIONS{'_COMMAND'}{'phase-1-per-object'}\n";
-			#&{ $$_OPTIONS{'_COMMAND'}{'phase-1-per-object'} }( $_user, $directory, $name, \%metadata, $_OPTIONS );
 			&{ $$_OPTIONS{'_COMMAND'}{'phase-1-per-object'} }( $_user, $directory, $name, $$_extant{ $$_extant{'ALL'}{$name} }{$name}, $_OPTIONS );
 		}
 	} else { # phase 2
 		if ( defined $$_OPTIONS{'_COMMAND'}{'phase-2-per-object'} ) {
-			#print "$$_OPTIONS{'_COMMAND'}{'phase-2-per-object'}\n";
-			#&{ $$_OPTIONS{'_COMMAND'}{'phase-2-per-object'} }( $_user, $directory, $name, \%metadata, $_OPTIONS );
 			&{ $$_OPTIONS{'_COMMAND'}{'phase-2-per-object'} }( $_user, $directory, $name, $$_extant{ $$_extant{'ALL'}{$name} }{$name}, $_OPTIONS );
 		}
 	}
@@ -6027,12 +5880,10 @@ sub CallPerSubdirectoryCallback($$$$$$$) {
 	
 	if ( $phase == 1 ) {
 		if ( defined $$_OPTIONS{'_COMMAND'}{'phase-1-per-subdirectory'} ) {
-			#print "$$_OPTIONS{'_COMMAND'}{'phase-1-per-subdirectory'}\n";
 			&{ $$_OPTIONS{'_COMMAND'}{'phase-1-per-subdirectory'} }( $_user, $directory, $subdirectory, $$_returned, $_extant, $_OPTIONS );
 		}
 	} else { # phase 2
 		if ( defined $$_OPTIONS{'_COMMAND'}{'phase-2-per-subdirectory'} ) {
-			#print "$$_OPTIONS{'_COMMAND'}{'phase-2-per-subdirectory'}\n";
 			&{ $$_OPTIONS{'_COMMAND'}{'phase-2-per-subdirectory'} }( $_user, $directory, $subdirectory, $$_returned, $_extant, $_OPTIONS );
 		}
 	}
@@ -6054,12 +5905,10 @@ sub CallDirectoryLeaveCallback($$$$) {
 	
 	if ( $phase == 1 ) {
 		if ( defined $$_OPTIONS{'_COMMAND'}{'phase-1-dir-leave'} ) {
-			#print "$$_OPTIONS{'_COMMAND'}{'phase-1-dir-leave'}\n";
 			return &{ $$_OPTIONS{'_COMMAND'}{'phase-1-dir-leave'} }( $_user, $object, $_OPTIONS );
 		}
 	} else { # phase 2
 		if ( defined $$_OPTIONS{'_COMMAND'}{'phase-2-dir-leave'} ) {
-			#print "$$_OPTIONS{'_COMMAND'}{'phase-2-dir-leave'}\n";
 			return &{ $$_OPTIONS{'_COMMAND'}{'phase-2-dir-leave'} }( $_user, $object, $_OPTIONS );
 		}
 	}
@@ -6079,7 +5928,6 @@ sub CallDirectoryLeaveCallback($$$$) {
 #     Returns the value returned by the directory leave callback
 sub ProcessDir($$$$$) {
 	my ($phase, $object, $_user, $_OPTIONS, $_STRINGS) = @_;
-	#print STDERR "ProcessDir($phase, $object, $_user, $_OPTIONS, $_STRINGS)\n"; 
 	LOG( "ProcessDir($phase, $object, $_user, $_OPTIONS, $_STRINGS)\n" ); 
 	unless ( $$_OPTIONS{quiet} ) {
 		print STDERR Localize( $STRINGS{'NOTE'} ) . " " . Localize( $$_STRINGS{'Phase'} ) . " $phase, " .Localize( $$_STRINGS{'processing'} ) . " $object\n"; 
