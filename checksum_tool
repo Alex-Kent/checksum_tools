@@ -16,7 +16,7 @@ use strict;
 
 $| = 1;
 
-my $VERSION_STRING = '1.1.9';
+my $VERSION_STRING = '1.1.10';
 
 # Files to completely ignore
 my %ignore = map { $_ => 1 } ( '.md5sums', '.no_md5sums', '.img-md5sums', '.atom', '.DS_Store', '.directory', '.folder.png', 'Thumbs.db', 'Desktop.ini', 'BBThumbs.dat', '.DS_Store', 'swapfile' );
@@ -5618,7 +5618,6 @@ sub ReadChecksumsFile($$$$) {
 	open SUM, "<", $filename or die "Fatal: $! while opening \"".$filename."\"\n";
 	
 	my $first_line = undef;
-	#my $version = 1;
 	
 	while (my $line = <SUM>) {
 		chomp $line;
@@ -5635,10 +5634,8 @@ sub ReadChecksumsFile($$$$) {
 		next if ($line =~ /^md5sum: .+: Is a directory$/); # may be found in older checksum files
 		
 		if ($$_version == 2	) {
-			#if ($line =~ /^\t(\d+)\t(\d+)\t(.+?\/)?([^\/]+)$/) {
 			if ($line =~ /^([0-9a-fA-F]{32})\t(\d+)\t(\d+)\t(.+)$/) {
-				#my ($md5, $mtime, $size, $path, $name) = ($1, $2, $3, $4, $5);
-				my ($md5, $mtime, $size, $name) = ($1, $2, $3, $4, $5);
+				my ($md5, $mtime, $size, $name) = ($1, $2, $3, $4);
 				my $cooked_name = $name;
 				$cooked_name =~ s/\\(.)/\1/g;
 				$$_old{$cooked_name} = { md5=>$md5, mtime=>$mtime, size=>$size, path=>$$_directory, name=>$name, line=>$line};
