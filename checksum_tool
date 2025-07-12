@@ -16,7 +16,7 @@ use strict;
 
 $| = 1;
 
-my $VERSION_STRING = '1.1.8';
+my $VERSION_STRING = '1.1.9';
 
 # Files to completely ignore
 my %ignore = map { $_ => 1 } ( '.md5sums', '.no_md5sums', '.img-md5sums', '.atom', '.DS_Store', '.directory', '.folder.png', 'Thumbs.db', 'Desktop.ini', 'BBThumbs.dat', '.DS_Store', 'swapfile' );
@@ -1165,11 +1165,6 @@ EOF
 #       # Detailed, human-readable description of how to use the command.
 #       # This is displayed when showing --help or --help-all.
 #     
-#     'two-phase' => BOOLEAN, 
-#       # Required
-#       # If true then both phase 1 and phase 2 scans will be run.
-#       # If false then only phase 1 scans will be run.
-#     
 #     'use-checksums' => BOOLEAN,
 #       # Optional, defaults to true
 #       # If true then load (and possibly compute) checksums when scanning 
@@ -1195,6 +1190,7 @@ EOF
 #       # 
 #       # Arguments:
 #       # $_user      -> Global user-defined datastructure
+#       #                This can be used to maintain state.
 #       # $_OBJECTS   -> Array of files and directories to process
 #       # $_OPTIONS   -> Hash with parsed commandline arguments
 #     
@@ -1242,20 +1238,18 @@ EOF
 #       # $directory  -> Name of the current directory
 #       # $object     -> Name of subdirectory that was just scanned
 #       # $returned   -> The value returned by the subdirectory scan call
-#       $_metadata  -> Hash with current file's metadata
+#       # $_metadata  -> Hash with current file's metadata
 #       # $_OPTIONS   -> Hash with parsed commandline arguments
 #     
 #     'phase-1-dir-leave' => SUBROUTINE,
 #       # Optional, defaults to undef
 #       # Called during phase 1 immediately before returning from a directory
-#       # If you need to return a value after scanning a directory is should be done here.
+#       # If you need to return a value after scanning a directory it should be done here.
 #       #
 #       # Arguments:
 #       # $_user      -> Global user-defined datastructure
 #       #                This can be used to maintain state.
 #       # $directory  -> Name of the current directory
-#       XXXXXXXXX # $_seen      -> Array with each seen file's name
-#       XXXXXXXX# $_metadata  -> Hash with each file's metadata
 #       # $_OPTIONS   -> Hash with parsed commandline arguments
 #     
 #     'phase-1-per-tree-post' => SUBROUTINE,
@@ -1324,8 +1318,6 @@ EOF
 #       # $_user      -> Global user-defined datastructure
 #       #                This can be used to maintain state.
 #       # $directory  -> Name of the current directory
-#       XXXXXX# $_seen      -> Array with each seen file's name
-#       XXXXXX# $_metadata  -> Hash with each file's metadata
 #       # $_OPTIONS   -> Hash with parsed commandline arguments
 #     
 #     'phase-2-post' => SUBROUTINE,
@@ -1352,7 +1344,7 @@ EOF
 # 
 # 
 # Phase 1 scans are always performed.
-# Phase 2 commands are only run when the 'two-phase' option is true.
+# Phase 2 scan is only performed when the 'phases' option is 2.
 #
 # COMMAND_NAME is the name used internally to refer to the command.  Ideally it 
 # should match the command's symlink on disk and should thus be the same as the 
@@ -1361,9 +1353,10 @@ EOF
 # Each OPTION_NAME is the option's top-level key in the hash defined in 
 # GetAvailableOptions(...)
 # 
-# Each STRING is a non-localized string which should:
+# Each STRING is a non-localized string which must:
 #   1) Use only 7-bit ASCII characters that are valid in Unix filenames
 #   2) Be written in English
+# (These requirements are for consistency and usability reasons.)
 # 
 # Each LOCALIZED_STRING is a hash suitable for passing to Localize(...)
 # 
@@ -1410,7 +1403,7 @@ sub GetAvailableCommands($$) {
 			
 			'phases' => undef,                 # Required (set to either 1 or 2)
 			                                   # This must be set by the command (either as an 
-			                                   # option on by the initialize callback.
+			                                   # option or by the initialize callback.
 			'use-checksums' => 1,              # Optional, defaults to true.
 			'skip-if-no_md5sums-present' => 1, # Optional, defaults to true.
 			
@@ -1700,7 +1693,7 @@ EOF
 			
 			'phases' => undef,                 # Required (set to either 1 or 2)
 			                                   # This must be set by the command (either as an 
-			                                   # option on by the initialize callback.
+			                                   # option or by the initialize callback.
 			'use-checksums' => 1,              # Optional, defaults to true.
 			'skip-if-no_md5sums-present' => 1, # Optional, defaults to true.
 			
@@ -1866,7 +1859,7 @@ EOF
 			
 			'phases' => undef,                 # Required (set to either 1 or 2)
 			                                   # This must be set by the command (either as an 
-			                                   # option on by the initialize callback.
+			                                   # option or by the initialize callback.
 			'use-checksums' => 1,              # Optional, defaults to true.
 			'skip-if-no_md5sums-present' => 1, # Optional, defaults to true.
 			
@@ -2214,7 +2207,7 @@ EOF
 			
 			'phases' => 2,                     # Required (set to either 1 or 2)
 			                                   # This must be set by the command (either as an 
-			                                   # option on by the initialize callback.
+			                                   # option or by the initialize callback.
 			'use-checksums' => 1,              # Optional, defaults to true.
 			'skip-if-no_md5sums-present' => 1, # Optional, defaults to true.
 			
@@ -2694,7 +2687,7 @@ EOF
 			
 			'phases' => undef,                 # Required (set to either 1 or 2)
 			                                   # This must be set by the command (either as an 
-			                                   # option on by the initialize callback.
+			                                   # option or by the initialize callback.
 			'use-checksums' => 1,              # Optional, defaults to true.
 			'skip-if-no_md5sums-present' => 1, # Optional, defaults to true.
 			
@@ -2942,7 +2935,7 @@ EOF
 			
 			'phases' => 1,                     # Required (set to either 1 or 2)
 			                                   # This must be set by the command (either as an 
-			                                   # option on by the initialize callback.
+			                                   # option or by the initialize callback.
 			'use-checksums' => 0,              # Optional, defaults to true.
 			'skip-if-no_md5sums-present' => 0, # Optional, defaults to true.
 			
@@ -3132,7 +3125,7 @@ EOF
 			
 			'phases' => undef,                 # Required (set to either 1 or 2)
 			                                   # This must be set by the command (either as an 
-			                                   # option on by the initialize callback.
+			                                   # option or by the initialize callback.
 			'use-checksums' => 1,              # Optional, defaults to true.
 			'skip-if-no_md5sums-present' => 1, # Optional, defaults to true.
 			
@@ -3646,7 +3639,7 @@ EOF
 #       # $_targets   -> Array with parsed commandline target objects
 #       #
 #       # Return undef if no exceptions were found.  If anything exceptional 
-#       # was found, return an array reference containing of EXCEPTION_TYPE, 
+#       # was found, return an array reference containing EXCEPTION_TYPE, 
 #       # LOCALIZED_STRING pairs listing the exceptions.  EXCEPTION_TYPE is 
 #       # a STRING: "ERROR" for fatal errors, "WARNING" for non-fatal errors, 
 #       # or "NOTE" for informational messages.
@@ -3664,9 +3657,10 @@ EOF
 # This must be 7-bit ASCII and may only contain lowercase letters, numbers, 
 # underscores, or dashes.
 # 
-# Each STRING is a non-localized string which should:
+# Each STRING is a non-localized string which must:
 #   1) Use only 7-bit ASCII characters that are valid in Unix filenames
 #   2) Be written in English
+# (These requirements are for consistency and usability reasons.)
 # 
 # Each LOCALIZED_STRING is a hash suitable for passing to Localize(...)
 # 
@@ -4523,7 +4517,7 @@ sub GetOptions($$$$$$$) {
 		
 		my $fatal = 0;
 		
-		# Loop through supported options...
+		# Check that command line options are valid
 		foreach my $option ( sort keys %$_OPTIONS ) {
 			unless ( $option_supported{$option} ) {
 				print STDERR Localize( $$_STRINGS{'ERROR'} ) . " " . Localize( $$_STRINGS{'unsupported-option'} ) . " $option_given_as{$option}\n";

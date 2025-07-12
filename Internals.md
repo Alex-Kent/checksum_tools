@@ -55,7 +55,6 @@ If a callback is not defined then it won't be run.  The available callbacks are:
 - **phase-2-post**  
     Called once phase 2 is completed,
 
-
 - **finalize**  
     Called after all objects have been processed,
 
@@ -107,7 +106,7 @@ Commands are constructed by the `GetAvailableCommands()` function.  This returns
     Default is `1` (don't process directory if a `.no-md5sums` file exists).
 
 - **Callback functions**  
-    Each command's behavior is defined by its callbacks.  These are `initialize`, `phase-1-per-tree-pre`, `phase-1-dir-enter`, `phase-1-per-object`, `phase-1-per-subdirectory`, `phase-1-dir-leave`, `phase-1-per-tree-post`, `phase-2-pre`, `phase-2-dir-enter`, `phase-2-per-object`, `phase-2-per-subdirectory`, `phase-2-dir-leave`, `phase-2-post`, `finalize`, described previously.  If a command does not use a particular callback it should be set to `undef` or simply omitted.
+    Each command's behavior is defined by its callbacks.  These are `initialize`, `phase-1-per-tree-pre`, `phase-1-dir-enter`, `phase-1-per-object`, `phase-1-per-subdirectory`, `phase-1-dir-leave`, `phase-1-per-tree-post`, `phase-2-pre`, `phase-2-dir-enter`, `phase-2-per-object`, `phase-2-per-subdirectory`, `phase-2-dir-leave`, `phase-2-post`, and `finalize`, all described previously.  If a command does not use a particular callback it should be set to `undef` or simply omitted.
 
     A more detailed description of the above (including callback function parameters) can be found in the "Command definitions" section of the `checksum_tool` source.
 
@@ -156,7 +155,7 @@ The set of available commandline options is returned by the `GetAvailableOptions
     An optional list reference containing an additional key/value pair to set when the option is present on the commandline.
 
 - **error-check**  
-    An optional anonymous subroutine to use for validating the option.  This can, e.g., make sure there are no conflicting options, check validity of additional arguments, etc.  Returns an exception or `undef` if the option is valid.  See the source for details.
+    An optional anonymous subroutine to use for validating the option.  This can, e.g., make sure there are no conflicting options, check validity of additional arguments, etc.  Returns an exception structure if the option is invalid or `undef` if the option is valid.  See the source for details.
 
 - **usage**  
     Brief human-readable description of the option.  The is shown when `--help` or `--help-core` (for command-specific and core options, respectively) is run.  The value is a localizable string.
