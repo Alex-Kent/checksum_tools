@@ -16,7 +16,7 @@ use strict;
 
 $| = 1;
 
-my $VERSION_STRING = '1.1.11';
+my $VERSION_STRING = '1.2.0';
 
 # Files to completely ignore
 my %ignore = map { $_ => 1 } ( '.md5sums', '.no_md5sums', '.img-md5sums', '.atom', '.DS_Store', '.directory', '.folder.png', 'Thumbs.db', 'Desktop.ini', 'BBThumbs.dat', '.DS_Store', 'swapfile' );
@@ -374,6 +374,8 @@ EOF
 		'is-a-mount-point' => { 'en' => "Not entering filesystem mounted at " },
 		
 		'invalid-call-path' => { 'en' => "Not a valid command function: " },
+		
+		'invalid-user-default' => { 'en' => "Invalid option in ~/.checksum_tools: " },
 	);
 }
 
@@ -4152,6 +4154,22 @@ EOF
 -x | --one-filesystem      Don't cross filesystem boundaries while recursing
 EOF
 			}
+		},
+		
+		# === no-user-settings-file ===
+		'no-user-settings-file' => { 
+			'short'          => undef, 
+			'long'           => '--no-user-settings-file', 
+			'core-option'    => 1,
+			'default'        => undef, 
+			'takes-arg'      => 0,
+			'set-additional' => undef,
+			'error-check'    => undef,
+			'usage'          => { 'en' => <<EOF
+--no-user-settings-file    Don't read default settings from ~/.checksum_tool
+                           (not specifiable in ~/.checksum_tool)
+EOF
+			}
 		}
 		
 	);
@@ -4541,15 +4559,74 @@ sub GetOptions($$$$$$$) {
 	$$_OPTIONS{'_COMMAND'} = $_COMMAND;
 	
 	
-	# === Set default values (default) ===
+	# === Read user defaults file (~/.checksum_tools) ===
 	
+	my %USER_DEFAULTS = ();
+	unless ( $$_OPTIONS{'no-user-settings-file'} ) {
+		# User defaults file should be read
+		
+		# Read the user default options file
+		my $options_file = File::Spec->catfile( $ENV{HOME}, '.checksum_tools' );
+		if ( -e $options_file ) {
+			my $SETTINGS;
+			open $SETTINGS, $options_file;
+			while ( my $line = <$SETTINGS> ) {
+				chomp $line;
+				if ( $line =~ /^\s*(\S+)(\s(.*))?\s*?$/ ) {
+					my $key   = $1;
+					my $value = $3;
+					next unless ($key);
+					next if ($key =~ /^#/);
+					
+					my $hash_key   = undef;
+					my $hash_value = undef;
+					
+					if ( defined $valid_short_options{$key} ) {
+						$hash_key = ( defined $valid_short_options{$key}{'set-key'} ) 
+						          ? $valid_short_options{$key}{'set-key'}
+						          : $valid_short_options{$key}{'NAME'};
+						if ( $valid_short_options{$key}{'takes-arg'} ) {
+							$hash_value = $value;
+						} else {
+							$hash_value = ( defined $valid_short_options{$key}{'set-value'} ) 
+							            ? $valid_short_options{$key}{'set-value'}
+							            : 1;
+						}
+					} elsif ( defined $valid_long_options{$key} ) {
+						$hash_key = ( defined $valid_long_options{$key}{'set-key'} ) 
+						          ? $valid_long_options{$key}{'set-key'}
+						          : $valid_long_options{$key}{'NAME'};
+						if ( $valid_long_options{$key}{'takes-arg'} ) {
+							$hash_value = $value;
+						} else {
+							$hash_value = ( defined $valid_long_options{$key}{'set-value'} ) 
+							            ? $valid_long_options{$key}{'set-value'}
+							            : 1;
+						}
+						$USER_DEFAULTS{$hash_key} = $hash_value;
+					} else {
+						print STDERR Localize( $STRINGS{'WARNING'} ) . " " . Localize( $STRINGS{'invalid-user-default'} ) . $key . "\n";
+					}
+				}
+			}
+			close $SETTINGS;
+		}
+	}
+	
+	
+	# === Set default values (default) ===
 	
 	# Loop through options...
 	foreach my $option ( sort keys %$_AVAILABLE_OPTIONS ) {
-		if ( ( ! exists $$_OPTIONS{$option} ) &&
-		     ( defined $$_AVAILABLE_OPTIONS{ $option } ) &&
-		     ( defined $$_AVAILABLE_OPTIONS{ $option }{ 'default' } ) ) {
-			$$_OPTIONS{$option} = $$_AVAILABLE_OPTIONS{ $option }{ 'default' };
+		unless ( exists $$_OPTIONS{$option} ) {
+			if ( defined $USER_DEFAULTS{$option} ) {
+				# A user-specified default was read from ~/.checksum_tools
+				$$_OPTIONS{$option} = $USER_DEFAULTS{$option};
+				
+			} elsif ( defined $$_AVAILABLE_OPTIONS{ $option }{ 'default' } ) {
+				# A built-in default value for the option exists
+				$$_OPTIONS{$option} = $$_AVAILABLE_OPTIONS{ $option }{ 'default' };
+			}
 		}
 	}
 	

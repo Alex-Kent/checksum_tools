@@ -1,6 +1,6 @@
 .pc
 
-.TH LINK_DUPES 1 "2021-04-27" "1.0.0" "Checksum tools"
+.TH LINK_DUPES 1 "2025-07-12" "1.2.0" "Checksum tools"
 .SH NAME
 link_dupes \- Replace duplicate files with links
 
@@ -187,6 +187,10 @@ If set then directories will be processed even if they contain a \f(CW.no_md5sum
 If set then neither extended attributes nor the \f(CW.md5sums\fR files will be written to under any circumstances.
 
 .TP
+.B \-\-no\-user\-settings\-file
+Don't read default settings from \fB~/.checksum_tool\fR
+
+.TP
 .B \-\-only\-write\-xa
 If set then checksums will only be written to extended attributes (\f(CW.md5sums\fR files will be not be written to under any circumstances).
 
@@ -227,7 +231,7 @@ provides a full description of how to use the software.
 
 .SH LICENSE
 
-checksum_tools \(co 2021 Alexander Hajnal
+checksum_tools \(co 2025 Alexander Hajnal
 
 This software is licensed under version 3 of the GNU Affero General Public License.  See the 
 .B LICENSE

@@ -1,6 +1,6 @@
 .pc
 
-.TH CHECKSUM_TOOL 1 "2021-04-27" "1.0.0" "Checksum tools"
+.TH CHECKSUM_TOOL 1 "2025-07-12" "1.2.0" "Checksum tools"
 .SH NAME
 checksum_tool \- Checksum tools suite
 
@@ -106,7 +106,14 @@ _
 
 
 
-.SH "OPTIONS"
+.SH "GLOBAL OPTIONS"
+
+Each command has its own command-specific set of options; run 
+.I command
+.B --help
+to see a specific command's available options.
+
+The following options can be used with all of the commands:
 
 .TP
 .B \-h\fR, \fB\-\-help
@@ -151,22 +158,10 @@ Discard existing checksums and recompute them
 Directories holding only symlinks or subdirectories (no regular files) are considered empty.
 
 .TP
-.B \-m\fR \fIdir\fR, \fB\-\-move\-dupes \fIdir\fR
-Move duplicate files into the directory 
-.I dir\fR.
-
-These can later be restored to the original locations using 
-.B restore_to_xa_location\fR.
-
-.TP
 .B \-n\fR, \fB\-\-same\-name
 For a file to match it must have same filename (case-insensitive) as well as the same fingerprint.
 
 At some point a \f(CW--case-insensitive\fR option may be added; if this is done, the \f(CW--same-name\fR option will be case-sensitive unless case-insensitivity is explicitly requested.
-
-.TP
-.B \-N\fR, \fB\-\-long-names
-Also show full path when displaying duplicates
 
 .TP
 .B \-O\fR, \fB\-\-overwrite
@@ -177,6 +172,14 @@ Allow overwriting of existing files
 Never overwrite existing files
 
 Attempting to overwrite an exising file will display a warning to \f(CWSTDERR\fR then continue.
+
+.TP
+.B \-q\fR, \fB\-\-quiet
+Suppress progress messages
+
+.TP
+.B \-Q\fR, \fB\-\-silent
+Don't write anything to STDERR
 
 .TP
 .B \-r\fR, \fB\-\-recurse
@@ -191,22 +194,6 @@ Do not recurse into subdirectories
 Don't cross filesystem boundaries while recursing
 
 .TP
-.B \-\-escape\-filenames=\fImode
-
-Escape special characters in file and directory names.
-
-.I mode 
-can be \f(CWoctal\fR, \f(CWhex\fR, \f(CWHEX\fR, \f(CWshell\fR, \f(CWuri\fR, or \f(CWURI\fR.
-
-In \f(CWshell\fR mode strings with special characters will have them octal encoded and wrapped so as to be suitable for direct shell usage (i.e. \f(CWESCAPED\fR becomes \f(CW$'ESCAPED'\fR).
-
-In both URI modes strings with special characters will have them hex encoded in a format suitable for usage in a URI (i.e. as \f(CW%XX\fR where \f(CWX\fR is a hex digit).
-
-Lowercase hex digits are output in \f(CWhex\fR and \f(CWuri\fR modes.
-
-Uppercase hex digits are output in \f(CWHEX\fR and \f(CWURI\fR modes. 
-
-.TP
 .B \-\-ignore\-no_md5sums
 If set then directories will be processed even if they contain a \f(CW.no_md5sums\fR file.
 
@@ -215,8 +202,41 @@ If set then directories will be processed even if they contain a \f(CW.no_md5sum
 If set then neither extended attributes nor the \f(CW.md5sums\fR files will be written to under any circumstances.
 
 .TP
+.B \-\-no\-user\-settings\-file
+Don't read default settings from \fB~/.checksum_tool\fR
+
+.TP
 .B \-\-only\-write\-xa
 If set then checksums will only be written to extended attributes (\f(CW.md5sums\fR files will be not be written to under any circumstances).
+
+.TP
+.B \-\-show\-all\-checksums
+Show checksum on all lines, not just the first
+
+.TP
+.B \-\-terse=MODE
+Use terse output; MODE controls what is shown:
+    dupe → only duplicate file paths
+    keep → only kept file paths
+    both → both types, prefixed with DUPE: or keep:
+
+
+.SH DEFAULT OPTION SETTINGS
+
+Default settings for most options can be specified in \fB~/.checksum_tool\fR
+
+This file contains user-specified defaults values for most command line options.  Options specified on the command line override those given in this file.  Note that not all options can be overridden on the command line if given in the file; to override those use the \fB\-\-no\-user\-settings\-file\fR command line option (which prevents all defaults given in this file from being used).
+
+Options should be listed one per line.
+
+For options that take a parameter, the syntax is the option name followed by a single whitespace character (space or tab) with the remainder of the line being used as the option's parameter.  Parameters must not be escaped nor be surrounded by quotation marks.
+
+Any options not supported by a given command will be ignored.
+
+All lines starting with a # are ignored.
+
+See \fBSample .checksum_tools file.txt\fR for an example file.
+
 
 .SH EXAMPLES
 
@@ -350,7 +370,7 @@ provides a full description of how to use the software.
 
 .SH LICENSE
 
-checksum_tools \(co 2021 Alexander Hajnal
+checksum_tools \(co 2025 Alexander Hajnal
 
 This software is licensed under version 3 of the GNU Affero General Public License.  See the 
 .B LICENSE

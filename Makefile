@@ -33,6 +33,7 @@ install-doc:
 	cp -va Internals.md    "${doc_dir}"/
 	cp -va Localization.md "${doc_dir}"/
 	cp -va LICENSE         "${doc_dir}"/
+	cp -va "Sample .checksum_tools file.txt" "${doc_dir}"/
 
 uninstall:
 	for f in ${PROGRAMS} ; do \

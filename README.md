@@ -496,6 +496,74 @@ If no files have changed then `NO CHANGES` is output.  If files have changed the
 This command always recomputes the MD5 checksums but never writes them.
 
 
+## Global options
+
+The following options can be used with all of the commands:
+
+    -h | --help                Show brief usage message
+    -H | --help-all            Show detailed usage message
+    --help-core                Show options supported by all commands
+    -A | --no-act              Do not delete or move any files (.md5sums and
+                               extended attribute metadata may be updated)
+    -b | --built-in-copy       Use a built-in function to copy files (instead of
+                               using e.g. "cp -ap"); this is also used when copying
+                               files or moving files across devices.
+                               (not currently implemented)
+    -c | --compute-missing     Compute and store MD5 checksums when not present
+                               (default)
+    --no-compute-missing       Don't compute or store missing MD5 checksums
+    -d | --discard-existing    Discard existing checksums and recompute them
+    -E | --ignore-symlinks     Directories holding only symlinks or subdirectories
+                               (no regular files) are considered empty.
+    -n | --same-name           For a file to match it must have same filename (case-
+                               insensitive) as well as the same fingerprint.
+                               At some point a --case-insensitive option may be
+                               added; if this is done, the --same-name option will
+                               be case-sensitive unless case-insensitivity is
+                               explicitly requested.
+    -O | --overwrite           Allow overwriting of existing files
+    -P | --preserve            Never overwrite existing files
+                               Attempting to overwrite an exising file will display
+                               a warning to STDERR then continue.
+    -q | --quiet               Suppress progress messages
+    -Q | --silent              Don't write anything to STDERR
+    -r | --recurse             Recurse into subdirectories (default)
+    -R | --no-recurse          Do not recurse into subdirectories
+    -x | --one-filesystem      Don't cross filesystem boundaries while recursing
+    --ignore-no_md5sums        If set then directories will be processed even if
+                               they contain a .no_md5sums file.
+    --never-rewrite-checksums  If set then neither extended attributes nor the
+                               .md5sums files will be written to under any
+                               circumstances.
+    --no-user-settings-file    Don't read default settings from ~/.checksum_tool
+                               (not specifiable in ~/.checksum_tool)
+    --only-write-xa            If set then checksums will only be written to
+                               extended attributes (.md5sums files will be not
+                               be written to under any circumstances).
+    --show-all-checksums       Show checksum on all lines, not just the first
+    --terse=MODE               Use terse output; MODE controls what is shown:
+                               dupe -> only duplicate file paths
+                               keep -> only kept file paths
+                               both -> both types, prefixed with DUPE: or keep:
+
+
+## Default option settings
+
+Default settings for most options can be specified in `~/.checksum_tool`
+
+This file contains user-specified defaults values for most command line options. Options specified on the command line override those given in this file. Note that not all options can be overridden on the command line if given in the file; to override those use the --no-user-settings-file command line option (which prevents all defaults given in this file from being used).
+
+Options should be listed one per line.
+
+For options that take a parameter, the syntax is the option name followed by a single whitespace character (space or tab) with the remainder of the line being used as the option's parameter. Parameters must not be escaped nor be surrounded by quotation marks.
+
+Any  options not supported by a given command will be ignored.
+
+All  lines starting with a # are ignored.
+
+See `Sample .checksum_tools file.txt` for an example file.
+
+
 ## Excluding directories
 
 If a directory contains a file name `.no_md5sums` then no checksums will be computed and no `.md5sums` files will be created in the directory or any of its subdirectories.  This is needed for certain system directories where the presence of any extraneous files causes errors (in this case `.no_md5sums` should be placed in the parent of the problematic directory).  It can also be used to block processing of temporary directories, database directories, or directories that contain extraordinarily large numbers of files (by placing `.no_md5sums` in the directory to skip).
