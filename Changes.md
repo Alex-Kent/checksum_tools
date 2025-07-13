@@ -1,3 +1,20 @@
+v1.2.0 2025-07-12 Added user defaults file support
+
+- Added ability to specify per-user default settings user defaults to be specified (via ~/.checksum_tool).
+- Updated documentation.
+
+v1.1.11 2025-07-12 Don't compute checksums for symlinks or anything that isn't a file.
+
+v1.1.10 2025-07-12 Cleaned up vestigial code. (no changes to logic)
+
+v1.1.9 2025-07-12 Clarified documentation and fixed typos, etc. therein. (no changes to logic)
+
+v1.1.8 2025-07-12 Removed diked out debugging statements. (no changes to logic)
+
+v1.1.7 2025-07-12 Restored correct behaviour for link_dupes and symlink_dupes
+
+ - Fixed bug introduced by code refactoring that had caused link_dupes and symlink_dupes to behave incorrectly.
+
 v1.1.6 2021-07-08 Updated man pages
 
  - Updated man pages to document the --only-write-xa and --ignore-no_md5sums options.  No code changes.
